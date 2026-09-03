@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import BrandMark from '@/components/brand-mark';
 import apiClient from '@/services/apiClient';
 import { saveToken, mustChangePassword } from '@/utils/auth';
 
@@ -108,9 +109,7 @@ const Login = () => {
         {/* Header */}
         <header className="flex items-center justify-between border-b border-border px-8 py-6">
           <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20">
-              <span className="text-base font-black leading-none">B</span>
-            </div>
+            <BrandMark className="size-9 shrink-0 rounded-xl shadow-lg shadow-primary/20" />
             <h2 className="text-xl font-bold tracking-tight text-foreground">
               BirdieUp Admin
             </h2>

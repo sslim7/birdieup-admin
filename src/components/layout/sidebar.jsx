@@ -21,6 +21,7 @@ import {
   resolveActiveHref,
   canAccessItem,
 } from '@/config/navigation';
+import BrandMark from '@/components/brand-mark';
 import { getAdminClaims, deleteToken } from '@/utils/auth';
 
 /** navigation.js 의 icon 문자열 → lucide 컴포넌트 매핑 */
@@ -192,9 +193,7 @@ function SidebarContent({ onNavigate }) {
     <>
       {/* Brand */}
       <div className="flex items-center gap-3 p-6">
-        <div className="size-10 rounded-xl bg-primary flex items-center justify-center text-primary-foreground shadow-lg shadow-primary/20">
-          <span className="text-lg font-black leading-none">B</span>
-        </div>
+        <BrandMark className="size-10 shrink-0 rounded-xl shadow-lg shadow-primary/20" />
         <div>
           <h1 className="text-lg font-bold leading-tight tracking-tight text-sidebar-foreground">
             BirdieUp Admin
