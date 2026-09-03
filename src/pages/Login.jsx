@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import BrandMark from '@/components/brand-mark';
 import apiClient from '@/services/apiClient';
 import { saveToken, mustChangePassword } from '@/utils/auth';
 
@@ -108,12 +107,18 @@ const Login = () => {
       <div className="z-10 flex w-full flex-col border-r border-border bg-login-bg shadow-2xl lg:w-[480px]">
         {/* Header */}
         <header className="flex items-center justify-between border-b border-border px-8 py-6">
-          <div className="flex items-center gap-3">
-            <BrandMark className="size-9 shrink-0 rounded-xl shadow-lg shadow-primary/20" />
-            <h2 className="text-xl font-bold tracking-tight text-foreground">
-              BirdieUp Admin
-            </h2>
-          </div>
+          {/*
+            birdieup-app 홈 헤더와 같은 워드마크를 세운다(그쪽은 ScreenHeader 의 titleImage).
+            로크업 안에 이미 `b` 심볼이 들어 있어 칩을 따로 두면 같은 마크가 둘이 된다.
+            높이도 앱과 같은 32px 로 맞추고 너비는 그림 비율에 맡긴다.
+
+            글자가 아니라 그림이므로 alt 로 이름을 남긴다 — 낭독기에는 이 문장이 읽힌다.
+          */}
+          <img
+            src="/header-lockup.png"
+            alt="BirdieUp Admin"
+            className="h-8 w-auto"
+          />
         </header>
 
         {/* Form */}
