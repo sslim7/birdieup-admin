@@ -783,15 +783,22 @@ export default function Emoticons() {
   //
   // 카드 전체를 draggable 로 두면 클릭(수정 열기)과 구분이 안 된다. 그래서 손잡이를
   // 누르고 있는 동안만 draggable 을 켠다.
+  // 두 목록이 상태를 나눠 쓰면 이모티콘을 끌던 중 캐릭터 카드에 놓는 것이 가능해진다.
+  // 각자 들고 있으면 상대 목록의 onDrop 이 애초에 자기 dragId 를 못 찾아 아무 일도 없다.
   const [dragId, setDragId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
   const [handleHeld, setHandleHeld] = useState(false);
+  const [charDragId, setCharDragId] = useState(null);
+  const [charDragOverId, setCharDragOverId] = useState(null);
+  const [charHandleHeld, setCharHandleHeld] = useState(false);
   const [reordering, setReordering] = useState(false);
 
   /**
    * 원하는 최종 차례(nextList)를 만들기 위해 **실제로 저장해야 할 행**을 고른다.
    *
    * 보통은 옮긴 행 하나뿐이고, 틈이 없을 때만 전체를 다시 벌린다.
+   * id 와 order 만 보므로 이모티콘과 캐릭터가 함께 쓴다 — 둘이 다른 규칙으로 갈리면
+   * 한쪽에서만 틈이 닳아 순서가 어긋난다.
    * @returns {{row: object, order: number}[]}
    */
   const planOrderWrites = (movedId, nextList) => {
@@ -882,6 +889,75 @@ export default function Emoticons() {
     } finally {
       setReordering(false);
     }
+  };
+
+  /**
+   * 캐릭터 순서. 이모티콘과 같은 규칙이다(planOrderWrites 주석).
+   *
+   * 캐릭터 목록은 전 캐릭터가 그대로 한 배열이라 이모티콘처럼 자리를 골라 끼울 필요가 없다.
+   */
+  const applyCharacterMove = async (movedId, nextList) => {
+    const writes = planOrderWrites(movedId, nextList);
+    if (writes.length === 0) return;
+
+    const snapshot = characters;
+    const orderById = new Map(writes.map(({ row, order }) => [row.id, order]));
+    setCharacters(
+      nextList.map((c) =>
+        orderById.has(c.id) ? { ...c, order: orderById.get(c.id) } : c
+      )
+    );
+
+    setReordering(true);
+    try {
+      const results = await Promise.allSettled(
+        writes.map(({ row, order }) =>
+          emoticonService.saveCharacter(row.id, {
+            name: row.name,
+            iconPath: row.iconPath,
+            order,
+            active: row.active,
+          })
+        )
+      );
+      const failed = results.find((r) => r.status === 'rejected');
+      if (failed) {
+        toast.error(readErrorMessage(failed.reason, '순서를 저장하지 못했습니다.'));
+        await load();
+        return;
+      }
+      toast.success(
+        writes.length > 1
+          ? `순서를 바꿨습니다. (간격이 닳아 ${writes.length}개를 다시 정렬)`
+          : '순서를 바꿨습니다.'
+      );
+    } catch (error) {
+      setCharacters(snapshot);
+      toast.error(readErrorMessage(error, '순서를 저장하지 못했습니다.'));
+    } finally {
+      setReordering(false);
+    }
+  };
+
+  const moveCharacter = (sourceId, targetId) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    const from = characters.findIndex((c) => c.id === sourceId);
+    const to = characters.findIndex((c) => c.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...characters];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyCharacterMove(sourceId, next);
+  };
+
+  const nudgeCharacter = (character, delta) => {
+    const from = characters.findIndex((c) => c.id === character.id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= characters.length) return;
+    const next = [...characters];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyCharacterMove(character.id, next);
   };
 
   /** sourceId 를 targetId 자리로 옮긴다. */
@@ -1028,7 +1104,7 @@ export default function Emoticons() {
             </p>
           ) : (
             <div className="flex flex-wrap gap-3">
-              {characters.map((character) => {
+              {characters.map((character, index) => {
                 const selected = character.id === selectedCharacterId;
                 const count = emoticons.filter(
                   (e) => e.characterId === character.id
@@ -1038,6 +1114,35 @@ export default function Emoticons() {
                     key={character.id}
                     role="button"
                     tabIndex={0}
+                    draggable={charHandleHeld}
+                    onDragStart={(e) => {
+                      setCharDragId(character.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', character.id);
+                    }}
+                    onDragOver={(e) => {
+                      if (!charDragId || charDragId === character.id) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      setCharDragOverId(character.id);
+                    }}
+                    onDragLeave={() =>
+                      setCharDragOverId((prev) =>
+                        prev === character.id ? null : prev
+                      )
+                    }
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      moveCharacter(charDragId, character.id);
+                      setCharDragId(null);
+                      setCharDragOverId(null);
+                      setCharHandleHeld(false);
+                    }}
+                    onDragEnd={() => {
+                      setCharDragId(null);
+                      setCharDragOverId(null);
+                      setCharHandleHeld(false);
+                    }}
                     onClick={() => setSelectedCharacterId(character.id)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
@@ -1045,12 +1150,42 @@ export default function Emoticons() {
                         setSelectedCharacterId(character.id);
                       }
                     }}
-                    className={`flex w-64 cursor-pointer items-center gap-3 rounded-2xl border p-3 transition-colors ${
-                      selected
+                    className={`group flex w-64 cursor-pointer items-center gap-2 rounded-2xl border p-3 transition-colors ${
+                      charDragOverId === character.id
                         ? 'border-primary bg-primary/5'
-                        : 'border-border hover:bg-muted/40'
-                    } ${character.active ? '' : 'opacity-50'}`}
+                        : selected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:bg-muted/40'
+                    } ${charDragId === character.id ? 'opacity-40' : ''} ${
+                      character.active ? '' : 'opacity-50'
+                    }`}
                   >
+                    {/* 이모티콘 카드와 같은 규칙: 손잡이를 쥐고 있는 동안만 draggable.
+                        가로로 긴 카드라 그림 위에 얹지 않고 맨 왼쪽에 세운다. */}
+                    <button
+                      type="button"
+                      aria-label={`${character.name} 순서 옮기기`}
+                      title="끌어서 옮기기 · 화살표 키로 한 칸씩"
+                      disabled={reordering}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={() => setCharHandleHeld(true)}
+                      onMouseUp={() => setCharHandleHeld(false)}
+                      onTouchStart={() => setCharHandleHeld(true)}
+                      onTouchEnd={() => setCharHandleHeld(false)}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          nudgeCharacter(character, -1);
+                        } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          nudgeCharacter(character, 1);
+                        }
+                      }}
+                      className="-ml-1 shrink-0 cursor-grab rounded-md p-0.5 text-muted-foreground opacity-0 transition hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <GripVertical className="size-3.5" />
+                    </button>
                     <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-muted/40">
                       {character.iconUrl ? (
                         <img
@@ -1068,8 +1203,11 @@ export default function Emoticons() {
                       <p className="truncate font-mono text-[11px] text-muted-foreground">
                         {character.id}
                       </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        이모티콘 {count}개 · order {character.order}
+                      <p
+                        className="truncate text-[11px] text-muted-foreground"
+                        title={`order ${character.order}`}
+                      >
+                        이모티콘 {count}개 · {index + 1}번째
                       </p>
                     </div>
 
