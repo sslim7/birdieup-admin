@@ -57,9 +57,34 @@ const ID_IMMUTABLE_HELP =
  */
 const ORDER_STEP = 100;
 
-/** 새 항목의 기본 order. 뒤에 붙는 편이 기존 순서를 흔들지 않는다. */
+/**
+ * order 상한. **서버의 maxOrder 와 같은 값이어야 한다**
+ * (birdieup-was internal/emoticons/admin.go). 넘겨 보내면 400 이고
+ * "정렬 순서는 0 이상 9999 이하 정수여야 해요" 가 돌아온다.
+ *
+ * 100 간격이면 99개까지 들어간다. 그보다 많아지면 간격을 좁혀서 맞춘다(renumberStep).
+ */
+const MAX_ORDER = 9999;
+
+/**
+ * 목록을 통째로 다시 벌릴 때 쓸 간격.
+ *
+ * 항목이 많으면 100 간격으로는 상한을 넘으므로 들어갈 만큼 좁힌다. 좁혀도 1 미만은
+ * 될 수 없어 9999개까지가 한계이고, 그 앞에서 서버 상한에 먼저 걸린다.
+ */
+function renumberStep(count) {
+  if (count <= 0) return ORDER_STEP;
+  return Math.max(1, Math.min(ORDER_STEP, Math.floor(MAX_ORDER / count)));
+}
+
+/**
+ * 새 항목의 기본 order. 뒤에 붙는 편이 기존 순서를 흔들지 않는다.
+ * 상한을 넘기면 상한에 붙인다 — 같은 값이 되면 서버가 id 로 갈라 정렬하고,
+ * 자리는 나중에 끌어서 잡으면 된다.
+ */
 function nextOrder(rows) {
-  return rows.reduce((max, row) => Math.max(max, Number(row.order) || 0), 0) + ORDER_STEP;
+  const max = rows.reduce((acc, row) => Math.max(acc, Number(row.order) || 0), 0);
+  return Math.min(max + ORDER_STEP, MAX_ORDER);
 }
 
 /**
@@ -188,6 +213,8 @@ function EmoticonFormDialog({
 
     if (!form.name.trim()) next.name = '이름을 입력해 주세요.';
     if (!Number.isInteger(Number(form.order))) next.order = '정수를 입력해 주세요.';
+    else if (Number(form.order) < 0 || Number(form.order) > MAX_ORDER)
+      next.order = `0 이상 ${MAX_ORDER} 이하여야 해요.`;
 
     // 그림이 없는 이모티콘은 서랍에서 아예 빠진다(서버가 imagePath 빈 행을 걸러 낸다).
     if (!file && !emoticon?.imagePath) next.image = '이미지를 선택해 주세요.';
@@ -440,6 +467,8 @@ function CharacterFormDialog({
 
     if (!form.name.trim()) next.name = '이름을 입력해 주세요.';
     if (!Number.isInteger(Number(form.order))) next.order = '정수를 입력해 주세요.';
+    else if (Number(form.order) < 0 || Number(form.order) > MAX_ORDER)
+      next.order = `0 이상 ${MAX_ORDER} 이하여야 해요.`;
     if (!file && !character?.iconPath) next.image = '아이콘 이미지를 선택해 주세요.';
 
     setErrors(next);
@@ -815,16 +844,22 @@ export default function Emoticons() {
     else if (after === null) candidate = before + ORDER_STEP;
     else candidate = Math.floor((before + after) / 2);
 
+    // 🔴 상한을 함께 본다. 맨 뒤로 보내면 candidate 가 이전값+100 이라 뒤로 보내기를
+    //    거듭할수록 값이 자란다. 상한을 안 보면 언젠가 9999 를 넘겨 400 을 받는데,
+    //    그때 화면에는 "순서를 저장하지 못했습니다" 만 뜨고 이유가 드러나지 않는다.
     const fits =
       Number.isInteger(candidate) &&
+      candidate >= 0 &&
+      candidate <= MAX_ORDER &&
       (before === null || candidate > before) &&
       (after === null || candidate < after);
 
     if (fits) return [{ row: nextList[at], order: candidate }];
 
-    // 틈이 닳았다. 이 캐릭터만 100 간격으로 다시 벌리고, 값이 달라진 행만 저장한다.
+    // 틈이 닳았거나 상한에 닿았다. 이 목록을 통째로 다시 벌리고 값이 달라진 행만 저장한다.
+    const step = renumberStep(nextList.length);
     return nextList
-      .map((row, index) => ({ row, order: (index + 1) * ORDER_STEP }))
+      .map((row, index) => ({ row, order: (index + 1) * step }))
       .filter(({ row, order }) => Number(row.order) !== order);
   };
 
