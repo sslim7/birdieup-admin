@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  GripVertical,
   ImageOff,
   ImagePlus,
   Loader2,
@@ -48,9 +49,17 @@ const IMAGE_ACCEPT = ALLOWED_IMAGE_TYPES.join(',');
 const ID_IMMUTABLE_HELP =
   'id 는 만든 뒤 바꿀 수 없어요. 과거 피드가 이 id 로 그림을 찾기 때문입니다.';
 
+/**
+ * order 를 벌려 두는 간격.
+ *
+ * 드래그로 옮길 때 이웃 둘의 가운데 값을 주기 위한 여유다. 100 이면 같은 자리에
+ * 연달아 끼워 넣어도 예닐곱 번은 버티고, 닳으면 그때 다시 벌린다.
+ */
+const ORDER_STEP = 100;
+
 /** 새 항목의 기본 order. 뒤에 붙는 편이 기존 순서를 흔들지 않는다. */
 function nextOrder(rows) {
-  return rows.reduce((max, row) => Math.max(max, Number(row.order) || 0), 0) + 1;
+  return rows.reduce((max, row) => Math.max(max, Number(row.order) || 0), 0) + ORDER_STEP;
 }
 
 /**
@@ -756,6 +765,152 @@ export default function Emoticons() {
     [emoticons, characterIds]
   );
 
+  // ── 드래그 정렬 ──────────────────────────────────────────────────
+  //
+  // 화면은 끌어다 놓지만 **저장되는 것은 order 숫자**다. Firestore 의 emoticons 는
+  // 이모티콘 하나가 문서 하나여서 컬렉션 자체에는 순서가 없고, 서버가 order 오름차순으로
+  // 정렬해 내려준다(docs/admin-api.md §4). 그래서 "배열 순서" 를 저장할 자리가 없다.
+  //
+  // 🔴 **order 를 1,2,3… 으로 촘촘히 매기지 않는다.** 그렇게 하면 한 칸 건너뛸 때마다
+  //    사이의 행이 전부 한 칸씩 밀려서, 다섯 칸을 옮기면 여섯 행을 저장하게 된다.
+  //    맨 앞을 맨 뒤로 보내면 24개가 통째로 나가고 활동 로그도 그만큼 부풀어
+  //    "무엇을 옮겼는지" 를 읽을 수 없다.
+  //    대신 100 간격으로 벌려 두고 **이웃 둘의 가운데 값**을 준다. 몇 칸을 옮기든
+  //    저장은 한 건이다.
+  //
+  // 틈이 다 닳으면(가운데에 정수가 없으면) 그때 한 번만 100 간격으로 다시 벌린다.
+  // order 는 정수여야 하므로(§4·아래 폼 검증) 소수로 무한히 쪼갤 수 없다.
+  //
+  // 카드 전체를 draggable 로 두면 클릭(수정 열기)과 구분이 안 된다. 그래서 손잡이를
+  // 누르고 있는 동안만 draggable 을 켠다.
+  const [dragId, setDragId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const [handleHeld, setHandleHeld] = useState(false);
+  const [reordering, setReordering] = useState(false);
+
+  /**
+   * 원하는 최종 차례(nextList)를 만들기 위해 **실제로 저장해야 할 행**을 고른다.
+   *
+   * 보통은 옮긴 행 하나뿐이고, 틈이 없을 때만 전체를 다시 벌린다.
+   * @returns {{row: object, order: number}[]}
+   */
+  const planOrderWrites = (movedId, nextList) => {
+    const at = nextList.findIndex((e) => e.id === movedId);
+    if (at < 0) return [];
+
+    const before = at > 0 ? Number(nextList[at - 1].order) : null;
+    const after =
+      at < nextList.length - 1 ? Number(nextList[at + 1].order) : null;
+
+    let candidate;
+    if (before === null && after === null) candidate = ORDER_STEP;
+    else if (before === null) candidate = Math.floor(after / 2);
+    else if (after === null) candidate = before + ORDER_STEP;
+    else candidate = Math.floor((before + after) / 2);
+
+    const fits =
+      Number.isInteger(candidate) &&
+      (before === null || candidate > before) &&
+      (after === null || candidate < after);
+
+    if (fits) return [{ row: nextList[at], order: candidate }];
+
+    // 틈이 닳았다. 이 캐릭터만 100 간격으로 다시 벌리고, 값이 달라진 행만 저장한다.
+    return nextList
+      .map((row, index) => ({ row, order: (index + 1) * ORDER_STEP }))
+      .filter(({ row, order }) => Number(row.order) !== order);
+  };
+
+  /**
+   * 옮긴 결과를 화면에 먼저 반영하고 서버에 저장한다.
+   *
+   * PUT 은 upsert 이므로 order 만 보내면 name·imagePath 가 비워진다
+   * (toggleEmoticonActive 주석과 같은 이유). 나머지 필드를 그대로 함께 싣는다.
+   */
+  const applyEmoticonMove = async (movedId, nextList) => {
+    const writes = planOrderWrites(movedId, nextList);
+    if (writes.length === 0) return;
+
+    const snapshot = emoticons;
+    const orderById = new Map(writes.map(({ row, order }) => [row.id, order]));
+
+    // 격자에 보이는 것은 이 캐릭터의 행뿐이지만 state 는 전 캐릭터를 한 배열로 들고 있다.
+    // 이 캐릭터가 차지하던 자리에 새 차례를 끼워 넣어 다른 캐릭터를 흔들지 않는다.
+    setEmoticons((prev) => {
+      const slots = [];
+      prev.forEach((e, index) => {
+        if (e.characterId === selectedCharacterId) slots.push(index);
+      });
+      const out = [...prev];
+      nextList.forEach((e, k) => {
+        if (slots[k] === undefined) return;
+        out[slots[k]] = orderById.has(e.id)
+          ? { ...e, order: orderById.get(e.id) }
+          : e;
+      });
+      return out;
+    });
+
+    setReordering(true);
+    try {
+      const results = await Promise.allSettled(
+        writes.map(({ row, order }) =>
+          emoticonService.saveEmoticon(row.id, {
+            characterId: row.characterId,
+            name: row.name,
+            imagePath: row.imagePath,
+            order,
+            active: row.active,
+          })
+        )
+      );
+      const failed = results.find((r) => r.status === 'rejected');
+      if (failed) {
+        // 일부만 저장되면 화면과 서버가 어긋난 채로 남는다. 추측하지 말고 다시 받아온다.
+        toast.error(readErrorMessage(failed.reason, '순서를 저장하지 못했습니다.'));
+        await load();
+        return;
+      }
+      toast.success(
+        writes.length > 1
+          ? `순서를 바꿨습니다. (간격이 닳아 ${writes.length}개를 다시 정렬)`
+          : '순서를 바꿨습니다.'
+      );
+    } catch (error) {
+      setEmoticons(snapshot);
+      toast.error(readErrorMessage(error, '순서를 저장하지 못했습니다.'));
+    } finally {
+      setReordering(false);
+    }
+  };
+
+  /** sourceId 를 targetId 자리로 옮긴다. */
+  const moveEmoticon = (sourceId, targetId) => {
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    const from = visibleEmoticons.findIndex((e) => e.id === sourceId);
+    const to = visibleEmoticons.findIndex((e) => e.id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...visibleEmoticons];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyEmoticonMove(sourceId, next);
+  };
+
+  /**
+   * 손잡이에서 화살표 키로 한 칸씩 옮긴다.
+   *
+   * 드래그만 두면 키보드로는 순서를 바꿀 방법이 아예 없다.
+   */
+  const nudgeEmoticon = (emoticon, delta) => {
+    const from = visibleEmoticons.findIndex((e) => e.id === emoticon.id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= visibleEmoticons.length) return;
+    const next = [...visibleEmoticons];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyEmoticonMove(emoticon.id, next);
+  };
+
   /**
    * 활성 스위치 즉시 저장.
    *
@@ -1011,11 +1166,39 @@ export default function Emoticons() {
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {visibleEmoticons.map((emoticon) => (
+              {visibleEmoticons.map((emoticon, index) => (
                 <div
                   key={emoticon.id}
                   role="button"
                   tabIndex={0}
+                  draggable={handleHeld}
+                  onDragStart={(e) => {
+                    setDragId(emoticon.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    // Firefox 는 데이터가 실리지 않은 드래그를 시작하지 않는다.
+                    e.dataTransfer.setData('text/plain', emoticon.id);
+                  }}
+                  onDragOver={(e) => {
+                    if (!dragId || dragId === emoticon.id) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverId(emoticon.id);
+                  }}
+                  onDragLeave={() =>
+                    setDragOverId((prev) => (prev === emoticon.id ? null : prev))
+                  }
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    moveEmoticon(dragId, emoticon.id);
+                    setDragId(null);
+                    setDragOverId(null);
+                    setHandleHeld(false);
+                  }}
+                  onDragEnd={() => {
+                    setDragId(null);
+                    setDragOverId(null);
+                    setHandleHeld(false);
+                  }}
                   onClick={() =>
                     setEmoticonDialog({ open: true, mode: 'edit', item: emoticon })
                   }
@@ -1025,11 +1208,44 @@ export default function Emoticons() {
                       setEmoticonDialog({ open: true, mode: 'edit', item: emoticon });
                     }
                   }}
-                  className={`group cursor-pointer rounded-2xl border border-border p-3 transition-colors hover:bg-muted/40 ${
+                  className={`group cursor-pointer rounded-2xl border p-3 transition-colors hover:bg-muted/40 ${
+                    dragOverId === emoticon.id
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border'
+                  } ${dragId === emoticon.id ? 'opacity-40' : ''} ${
                     emoticon.active ? '' : 'opacity-50'
                   }`}
                 >
-                  <div className="mb-2 flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-muted/40">
+                  {/* 손잡이를 누르고 있는 동안만 카드가 draggable 이 된다.
+                      카드 전체를 항상 draggable 로 두면 수정하려고 누른 클릭이 조금만
+                      흔들려도 드래그가 되어 버린다. 아래 줄(배지·스위치·삭제)은 좁은
+                      카드에서 이미 꽉 차 있어 손잡이를 그림 위에 얹는다. */}
+                  <div className="relative mb-2 aspect-square overflow-hidden rounded-xl bg-muted/40">
+                    <button
+                      type="button"
+                      aria-label={`${emoticon.name} 순서 옮기기`}
+                      title="끌어서 옮기기 · 화살표 키로 한 칸씩"
+                      disabled={reordering}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={() => setHandleHeld(true)}
+                      onMouseUp={() => setHandleHeld(false)}
+                      onTouchStart={() => setHandleHeld(true)}
+                      onTouchEnd={() => setHandleHeld(false)}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          nudgeEmoticon(emoticon, -1);
+                        } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          nudgeEmoticon(emoticon, 1);
+                        }
+                      }}
+                      className="absolute left-1 top-1 z-10 cursor-grab rounded-md bg-background/80 p-1 text-muted-foreground opacity-0 shadow-sm backdrop-blur transition hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <GripVertical className="size-3.5" />
+                    </button>
+                    <div className="flex size-full items-center justify-center">
                     {emoticon.url ? (
                       <img
                         src={emoticon.url}
@@ -1043,6 +1259,7 @@ export default function Emoticons() {
                         <span className="text-[10px]">이미지 없음</span>
                       </div>
                     )}
+                    </div>
                   </div>
 
                   <p className="truncate text-sm font-bold">{emoticon.name}</p>
@@ -1051,8 +1268,14 @@ export default function Emoticons() {
                   </p>
 
                   <div className="mt-2 flex items-center justify-between gap-1">
-                    <Badge variant="outline" className="font-mono text-[10px]">
-                      order {emoticon.order}
+                    {/* 벌려 둔 order(100·200…)를 그대로 보이면 운영자가 읽을 이유가 없는
+                        숫자가 카드마다 뜬다. 자리 번호를 보이고 원값은 tooltip 에 둔다. */}
+                    <Badge
+                      variant="outline"
+                      className="font-mono text-[10px]"
+                      title={`order ${emoticon.order}`}
+                    >
+                      {index + 1}번째
                     </Badge>
                     <div
                       className="flex items-center gap-1"
