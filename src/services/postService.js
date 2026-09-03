@@ -313,7 +313,7 @@ export function validatePostImage(file) {
 /**
  * 서명된 업로드 URL 을 받는다.
  *
- * 이모티콘(§4)과 달리 **글에 매이지 않는다** — 저장 경로가 `posts/images/{16hex}.{ext}` 라
+ * 이모티콘(§4)과 달리 **글에 매이지 않는다** — 저장 경로가 `admin/posts/images/{16hex}.{ext}` 라
  * postId 를 요구하지 않는다. 아직 저장하지 않은 새 글에도 이미지를 넣을 수 있어야 하기 때문이다.
  */
 export async function createPostImageUploadUrl({ contentType, bytes }) {

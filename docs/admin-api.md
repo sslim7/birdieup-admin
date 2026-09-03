@@ -221,8 +221,14 @@ req  { contentType: "image/png"|"image/jpeg"|"image/webp"|"image/gif", bytes: nu
 res  201 { uploadUrl, storagePath, url, expiresInSec }
 ```
 
-- 저장 경로는 `posts/images/{16hex}.{ext}`. 이모티콘과 달리 **글에 매이지 않는다** —
+- 저장 경로는 `admin/posts/images/{16hex}.{ext}`. 이모티콘과 달리 **글에 매이지 않는다** —
   작성 중(아직 postId 가 없을 때)에도 이미지를 넣을 수 있어야 하기 때문이다.
+- 접두어 `admin/` 은 **관리자가 올린 것**이라는 표시다. 같은 버킷에 사는 사용자 자산
+  (`users/{uid}/avatar/` · `rounds/{roundId}/media/`)과 **지우는 규칙이 정반대**라서 나눈다 —
+  사용자 자산은 탈퇴·만료로 통째로 지우고, 관리자 자산은 참조가 끊겨도 남긴다(아래 고아
+  이미지 항목). 정리 배치가 둘을 경로만 보고 가리지 못하면 실수 한 번이 되돌릴 수 없다.
+  이모티콘(`emoticons/{characterId}/`)은 이미 심긴 자산이 있어 옮기지 않았다 —
+  관리자 자산이 두 자리로 갈린 것은 **알고 받아들인 예외**다.
 - 최대 5MB. 업로드 방식은 §4 와 같다: SPA 가 `uploadUrl` 로 직접 PUT 하고,
   요청한 `contentType` 을 헤더에 그대로 실어야 서명이 맞는다.
 - 그 다음 **에디터가 `![](url)` 을 본문에 끼워 넣는다.**
@@ -242,12 +248,15 @@ res  201 { uploadUrl, storagePath, url, expiresInSec }
   참조를 세야 하는데, 그 판정이 틀리면 살아 있는 글의 그림이 사라진다. 되돌릴 수 없는 쪽의
   위험이 훨씬 크므로 남기는 쪽을 고른다.
 
-### 2.3 앱 쪽 영향 (아직 만들어지지 않은 화면)
+### 2.3 앱 쪽 영향
 
-`GET /posts/{postId}` 의 `body` 도 같은 마크다운이다. 앱의 공지·업데이트 상세 화면은
-아직 없고(`birdieup-was/docs/spec-notices-suggestions.md` §5 의 「준비 중」), 그 화면을 만들 때
-**마크다운 렌더러와 새니타이저가 필요하다**는 것이 이 변경으로 생긴 숙제다.
-평문으로 그리면 `##` 과 `![](...)` 이 화면에 글자 그대로 나온다.
+`GET /posts/{postId}` 의 `body` 도 같은 마크다운이다. 앱의 공지·업데이트 화면은
+**만들어졌다** — `birdieup-app` 의 설정 시트에서 열리고, 마크다운은 `markdown-body.tsx`
+(`@ronradtke/react-native-markdown-display`)가 그린다.
+
+그래서 이 문서의 §2.1 「허용·금지 문법」은 이제 **양쪽 렌더러의 계약**이다. 어드민 에디터가
+내보내는 문법과 앱이 그리는 문법이 갈리면, 운영자가 화면에서 본 것과 회원이 보는 것이
+달라진다 — 문법을 늘릴 때는 두 곳을 함께 본다.
 - `title` 1..100자, `body` 1..20000자.
 - `publishedAt` 이 미래면 앱에서 안 보인다(= 예약 발행). 목록에 「예약」 배지로 표시한다.
 - `kind` 가 잘못되면 400 `VALIDATION_FAILED`.
@@ -343,8 +352,10 @@ req  { contentType: "image/png"|"image/jpeg"|"image/webp", bytes: number,
        characterId: string, emoticonId?: string }
 res  201 { uploadUrl, storagePath, url, expiresInSec }
 ```
-- `emoticonId` 가 있으면 `emoticons/{characterId}/{emoticonId}-{16hex}.png`,
-  없으면 캐릭터 아이콘으로 보고 `emoticons/{characterId}/_character-{16hex}.png`.
+- `emoticonId` 가 있으면 `emoticons/{characterId}/{emoticonId}-{16hex}.{ext}`,
+  없으면 캐릭터 아이콘으로 보고 `emoticons/{characterId}/_character-{16hex}.{ext}`.
+  `{ext}` 는 `contentType` 에서 나온다(§2.2 와 같다) — jpeg·webp 를 허용하면서 `.png` 로
+  적어 두면 파일 이름이 내용과 어긋나고, 그 뒤로 이 경로를 읽는 도구가 전부 속는다.
 - 응답의 `url` 은 업로드가 끝난 뒤 그 파일이 갖게 될 공개 주소다. **업로드 직후에는 아직
   객체가 없어 SPA 는 쓰지 않는다**(미리보기는 로컬 objectURL, 확정 후에는 목록 재조회).
   기존 두 업로드 엔드포인트(`/users/me/avatar/upload-url`, `/rounds/…/media/upload-url`)와
@@ -370,6 +381,11 @@ DELETE 둘 다 → 204
   운영 규칙은 **"지우지 말고 `active:false` 로 숨긴다"** 이다.
 - 쓰기가 성공하면 서버가 `emoticons.Catalog` 의 5분 캐시를 즉시 무효화한다.
   안 하면 방금 등록한 이모티콘이 앱에 최대 5분 늦게 뜬다.
+- ⚠ **그 무효화는 프로세스 안에서만 유효하다.** 신호가 패키지 전역 세대 카운터라
+  (`internal/emoticons`), 인스턴스가 여럿인 Cloud Run 에서는 **쓰기를 받은 인스턴스만**
+  캐시를 버리고 나머지는 최대 5분 옛 목록을 계속 준다. 로컬·단일 인스턴스에서는 드러나지
+  않아 배포 뒤에야 "어떤 사람에게는 보이고 어떤 사람에게는 안 보인다" 로 나타난다.
+  전 인스턴스에 걸치게 하려면 Firestore 의 개정 문서를 구독하는 공유 신호가 필요하다.
 
 ---
 
@@ -447,7 +463,7 @@ res 200 {
 | 활동 로그 — `audit_logs` 컬렉션과 쓰기 요청 기록 | §5 |
 | 첫 계정 부트스트랩 CLI | §6 |
 | `/admin/posts` CRUD + `status`·`search` 필터 (공개 목록과 달리 **예약분까지** 보여야 한다) | §2 |
-| `/admin/posts/images/upload-url` — 기존 발급기 둘은 `users/{uid}/avatar/`·라운드 미디어 경로가 박혀 있어 `posts/images/` 를 못 만든다 | §2.2 |
+| `/admin/posts/images/upload-url` — 기존 발급기 둘은 `users/{uid}/avatar/`·라운드 미디어 경로가 박혀 있어 `admin/posts/images/` 를 못 만든다 | §2.2 |
 | `/admin/suggestions` 목록·상세·답변·재발송 (로직은 있고 라우트가 없다) | §3 |
 | `/admin/emoticons` 쓰기 전체 + `upload-url` + **쓰기 후 `Catalog` 캐시 무효화** | §4 |
 
