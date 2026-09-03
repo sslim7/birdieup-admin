@@ -1,0 +1,266 @@
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * mk-ops 의 globals.css 는 `@import "shadcn/tailwind.css"` 로 shadcn 패키지가 제공하는
+ * custom variant 들을 가져온다. 이 프로젝트는 shadcn CLI 를 쓰지 않아 해당 패키지가 없으므로,
+ * 필요한 정의를 아래에 그대로 인라인한다. (shadcn@3.8.5 dist/tailwind.css 기준)
+ */
+@theme inline {
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(
+        --radix-accordion-content-height,
+        var(--accordion-panel-height, auto)
+      );
+    }
+  }
+
+  @keyframes accordion-up {
+    from {
+      height: var(
+        --radix-accordion-content-height,
+        var(--accordion-panel-height, auto)
+      );
+    }
+    to {
+      height: 0;
+    }
+  }
+}
+
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-checked {
+  &:where([data-state="checked"]),
+  &:where([data-checked]:not([data-checked="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-unchecked {
+  &:where([data-state="unchecked"]),
+  &:where([data-unchecked]:not([data-unchecked="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-selected {
+  &:where([data-selected="true"]) {
+    @slot;
+  }
+}
+
+@custom-variant data-disabled {
+  &:where([data-disabled="true"]),
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-active {
+  &:where([data-state="active"]),
+  &:where([data-active]:not([data-active="false"])) {
+    @slot;
+  }
+}
+
+@custom-variant data-horizontal {
+  &:where([data-orientation="horizontal"]) {
+    @slot;
+  }
+}
+
+@custom-variant data-vertical {
+  &:where([data-orientation="vertical"]) {
+    @slot;
+  }
+}
+
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: var(--font-jetbrains-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-status-active: var(--status-active);
+  --color-status-expiring: var(--status-expiring);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-panel-dark: var(--panel-dark);
+  --color-panel-dark-deep: var(--panel-dark-deep);
+  --color-panel-dark-warm: var(--panel-dark-warm);
+  --color-login-bg: var(--login-bg);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
+:root {
+  /* BirdieUp Admin Design System — birdieup-app 의 디자인 토큰(src/constants/birdieup-theme.ts)을 이식 */
+  --radius: 0.75rem; /* 12px */
+
+  /*
+   * 장식용 font-mono 텍스트에만 쓰이므로 웹폰트를 새로 받지 않고 시스템 monospace 로 폴백한다.
+   */
+  --font-jetbrains-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Core — warm paper 배경 위의 진초록 잉크 */
+  --background: #F2EFE6;                      /* bg */
+  --foreground: #12301F;                      /* ink */
+
+  /* Cards & Popovers */
+  --card: #FBF9F3;                            /* card */
+  --card-foreground: #12301F;
+  --popover: #FBF9F3;
+  --popover-foreground: #12301F;
+
+  /* Primary — BirdieUp Green #1F6B45 */
+  --primary: #1F6B45;
+  --primary-foreground: #F2EFE6;              /* onInk */
+
+  /* Secondary */
+  --secondary: rgba(18, 48, 31, 0.07);        /* inkFillSoft */
+  --secondary-foreground: #12301F;
+
+  /* Muted */
+  --muted: rgba(18, 48, 31, 0.07);
+  --muted-foreground: #8A9A8F;                /* muted */
+
+  /* Accent — 라임 #C8E85F. 잉크 위에서만 대비가 나오므로 전경은 ink 다. */
+  --accent: #C8E85F;
+  --accent-foreground: #12301F;
+
+  /* Destructive — #B23A2A */
+  --destructive: #B23A2A;
+  --destructive-foreground: #F2EFE6;
+
+  /* Info */
+  --info: #2F6F9E;
+  --info-foreground: #F2EFE6;
+
+  /* Borders & Inputs */
+  --border: rgba(18, 48, 31, 0.12);           /* borderCard */
+  --input: rgba(18, 48, 31, 0.14);            /* borderStrong */
+  --ring: #1F6B45;
+
+  /* Success */
+  --success: #1F6B45;
+  --success-foreground: #F2EFE6;
+
+  /* Warning */
+  --warning: #C8E85F;
+  --warning-foreground: #12301F;
+
+  /* Status indicators */
+  --status-active: #1F6B45;
+  --status-expiring: #B58A2B;
+
+  /* Charts */
+  --chart-1: #1F6B45;
+  --chart-2: #C8E85F;
+  --chart-3: #3E5C4B;
+  --chart-4: #B23A2A;
+  --chart-5: #8A9A8F;
+
+  /* Login page */
+  --login-bg: #F2EFE6;
+
+  /* Login decorative panel — ink 계열 딥 그린 */
+  --panel-dark: #12301F;
+  --panel-dark-deep: #0B1D13;
+  --panel-dark-warm: #1A3C28;
+
+  /* Sidebar */
+  --sidebar: #FBF9F3;
+  --sidebar-foreground: #12301F;
+  --sidebar-primary: #1F6B45;
+  --sidebar-primary-foreground: #F2EFE6;
+  --sidebar-accent: rgba(18, 48, 31, 0.07);
+  --sidebar-accent-foreground: #12301F;
+  --sidebar-border: rgba(18, 48, 31, 0.12);
+  --sidebar-ring: #1F6B45;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* 콘솔 블록 커서 깜빡임 — on/off 토글 (pulse 아님) */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@utility animate-cursor-blink {
+  animation: cursor-blink 1s step-end infinite;
+}
