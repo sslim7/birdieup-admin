@@ -47,7 +47,9 @@ TTL: `rememberMe` 면 6주, 아니면 12시간.
 - `isAdmin: true` → 전 메뉴·전 엔드포인트 접근.
 - 아니면 `permissions` 맵에 있는 메뉴 키만 접근. 키는 SPA 의 `src/config/navigation.js` 가
   href 로부터 정의한다(`/posts/notices` → `posts-notices`).
-- 현재 키: `posts-notices`, `posts-releases`, `suggestions`, `emoticons`.
+- 현재 키: `posts-notices`, `posts-releases`, `suggestions`, `emoticons`, `metrics`.
+- `metrics` 만 href 에서 파생되지 않는다 — 홈(`/`)이 지표 대시보드지만 홈 자체는
+  누구나 들어와야 해서 메뉴에 권한을 달 수 없다. 자세한 이유는 §8.
 - 어드민 계정 관리(`/admin/admins`)와 활동 로그(`/admin/audit-logs`)는 **`isAdmin` 전용**이다.
 - **서버가 최종 판정자다.** 사이드바 숨김·라우트 가드는 편의일 뿐이고, 권한 없는 호출은 403 `FORBIDDEN`.
 
@@ -473,6 +475,7 @@ res 200 {
 | `/admin/posts/images/upload-url` — 기존 발급기 둘은 `users/{uid}/avatar/`·라운드 미디어 경로가 박혀 있어 `admin/posts/images/` 를 못 만든다 | §2.2 |
 | `/admin/suggestions` 목록·상세·답변·재발송 (로직은 있고 라우트가 없다) | §3 |
 | `/admin/emoticons` 쓰기 전체 + `upload-url` + **쓰기 후 `Catalog` 캐시 무효화** | §4 |
+| `/admin/metrics/summary`·`/admin/metrics/daily` + 매일 04:00(KST) 롤업 배치와 `daily_actives` 방문 계측 | §8 |
 
 그 밖에 짚어 둘 것:
 
@@ -484,3 +487,104 @@ res 200 {
   붙으므로 색인이 하나 더 필요할 수 있다. 배포 전에 확인할 것.
 - **`cmd/seed-emoticons` 는 은퇴 대상**이다(도구 자신의 주석이 그렇게 적고 있다).
   이모티콘 화면이 동작하는 것을 확인한 뒤 그 README 에 「사용 중지」를 적는다.
+
+---
+
+## 8. 지표 (metrics)
+
+권한 키 **`metrics`**. `isAdmin` 이거나 `permissions.metrics` 가 true 인 계정만 부를 수 있고,
+아니면 403 `FORBIDDEN` 이다.
+
+어드민 콘솔의 **홈(`/`)이 곧 이 지표 대시보드**다 — `/metrics` 같은 별도 경로는 없다.
+다만 **메뉴(홈)에는 권한을 달지 않는다.** 라우트 가드가 권한 없는 계정을 홈으로 되돌리는데
+그 홈까지 막혀 있으면 무한 루프가 되기 때문이다. 로그인 후 착지점은 누구나 열려 있고,
+막는 것은 이 API 뿐이다. 권한이 없는 계정에게는 화면이 403 을 받아 안내 문구로 대체한다.
+
+### 8.1 실시간과 야간 롤업이 갈리는 지점
+
+**이 화면을 읽는 사람이 가장 먼저 오해하는 지점이므로 먼저 적는다.**
+
+| 필드 | 무엇인가 | 기준 시각 |
+|---|---|---|
+| `live.*` | 요청을 받은 그 순간 컬렉션을 세어 만든 값 | 지금 (`live.asOf`) |
+| `rollup.*` | 야간 배치가 접어 둔 값 | `rollup.date` (보통 어제) |
+| `daily.days[]` | 같은 배치가 하루 단위로 접어 둔 값 | 각 항목의 `date` |
+
+- 배치는 **매일 04:00(KST)** 에 돌고 **전날치까지** 접는다. 그래서 `rollup.date` 는 보통 어제다.
+- **오늘은 아직 집계 전이다.** `daily` 의 기간에 오늘이 들어 있어도 오늘 문서는 없어서
+  `missing: true` 로 내려간다. 화면은 그 칸을 **0 으로 그리면 안 된다** — 0 으로 그리면
+  "오늘 갑자기 뚝 떨어졌다"로 읽힌다. "집계 중"으로 표시한다.
+- 그래서 `live.users.active` 와 `rollup.cumulative.users` 가 어긋나는 것은 **정상**이다.
+  서로 다른 시각의 값이고, 같아야 하는 값이 아니다.
+- 날짜는 전부 KST 이고 `dateTo` 는 그날을 **포함**한다(§5 활동 로그와 같은 규칙).
+- 🔴 **사진/동영상 누계(`cumulative.photos` / `cumulative.videos`)는 누적 업로드 수이며 삭제분을 빼지 않는다.**
+  피드를 지우면 `medias` 문서가 함께 지워져 "몇 장이 지워졌는지"를 나중에 복원할 수 없기 때문이다.
+  지금 살아 있는 미디어 수가 필요하면 `live.media.alive` 를 본다(이쪽은 실시간 집계다).
+
+### 8.2 요약
+
+```
+GET /admin/metrics/summary
+
+res 200 {
+  live: {                                    // 요청 시점 실시간 집계
+    users:     { active, withdrawn, suspended },
+    rounds:    { total, live, ended, aborted },
+    feeds:     { total, deleted, alive },
+    friends:   { total, linked, unlinked },
+    reactions: { total },
+    media:     { alive },
+    asOf: "2026-09-06T11:20:00Z"             // RFC3339 UTC
+  },
+  rollup: {                                  // 야간 배치가 접어 둔 값. 없으면 null
+    date: "2026-09-05",                      // 마지막으로 집계가 끝난 날 (KST)
+    activeUsers: { dau, wau, mau, contributors },
+    cumulative:  { users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions },
+    yesterday:   { users: {...}, friends: {...}, rounds: {...}, feeds: {...}, reactions: {...} },
+    last7d:      { users: {...}, friends: {...}, rounds: {...}, feeds: {...}, reactions: {...} }
+  }
+}
+```
+
+- **`rollup` 은 롤업 문서가 하나도 없으면 `null` 이다.** 배치가 아직 한 번도 안 돌았거나
+  방금 붙인 환경이 그렇다. 이때 화면은 **0 을 그리지 않고** "집계 대기 중"을 보여준다 —
+  0 을 그리면 "지표가 0" 인지 "아직 안 붙었는지"를 구분할 수 없다.
+- `live` 는 롤업과 무관하게 언제나 온다. `rollup` 이 null 이어도 누적 카드는 그릴 수 있다.
+- `activeUsers.dau|wau|mau` 는 `rollup.date` 기준의 **이동 구간** 값이다. 누적값이 아니므로
+  "기간 증감"을 계산하지 마라 — 구간이 겹쳐서 뺄셈이 성립하지 않는다.
+
+### 8.3 일자별
+
+```
+GET /admin/metrics/daily?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+
+res 200 { days: [
+  { date: "2026-09-01", missing: false,
+    users:     { new, withdrawn, restored },
+    active:    { viewersDau, viewersWau, viewersMau, contributors, viewersMissing?: true },
+    friends:   { new, newLinked },
+    rounds:    { started, ended, aborted, watchers,
+                 byBetType: { stroke, holecost, friendly, skins } },
+    feeds:     { created, messages, emoticons, system, youtube, photos, videos, deleted },
+    reactions: { created },
+    cumulative:{ users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions } },
+  { date: "2026-09-02", missing: true }
+] }
+```
+
+- `dateFrom` / `dateTo` **둘 다 필수**다(하나만 주면 400). KST 날짜, `dateTo` 포함.
+- 응답의 `days` 는 요청 구간의 **모든 날짜를 빠짐없이** 오름차순으로 담는다.
+  구멍은 빼는 것이 아니라 `missing: true` 로 표시된다.
+- ⚠ **`missing: true` 인 날은 그날 롤업 문서가 없다는 뜻이고, `missing` 과 `date` 외의
+  필드는 오지 않는다.** 0 으로 채워 그리지 마라 — 표에는 `—`, 추이 선은 끊는다.
+  아직 집계 전인 오늘, 배치가 실패한 날, 서비스 이전의 날이 전부 여기 걸린다.
+- ⚠ **`active.viewersMissing: true` 는 그날 방문 계측(`daily_actives`)이 없다는 표식이다.**
+  과거를 백필로 채운 날이 그렇다 — 피드·라운드 같은 쓰기 기록은 뒤늦게도 셀 수 있지만
+  "그날 누가 앱을 열었는가"는 그때 찍어 두지 않으면 복원할 수 없다.
+  이 표식이 오면 `viewersDau` / `viewersWau` / `viewersMau` 는 아예 오지 않으므로
+  **그 세 지표만** `—` 로 그린다. 같은 날의 `contributors` 와 나머지 지표는 유효하다.
+- `feeds.created` 는 그날 만들어진 피드 전체이고 `messages`/`emoticons`/`system`/`youtube` 는
+  그 내역이다. `photos`/`videos` 는 그 피드에 붙은 **미디어 개수**라서 피드 수와 합이 맞지 않는다.
+- `rounds.byBetType` 의 키는 앱의 내기 방식과 같다(`stroke` 스트로크 / `holecost` 홀당 / `friendly` 친선 / `skins` 스킨스).
+  새 방식이 생기면 키가 늘어난다 — 화면은 **모르는 키를 만나도 깨지지 않아야** 한다.
+- 구간이 넓으면 응답이 그만큼 길어진다. 화면 기본값은 7 / 30 / 90 일이다.
