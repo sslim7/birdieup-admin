@@ -45,6 +45,7 @@ import {
   shortDateLabel,
   sumBetTypes,
   sumMetric,
+  summaryViewersUsable,
 } from '@/lib/metrics';
 import { fetchDailyMetrics, fetchMetricsSummary } from '@/services/metricsService';
 import { getAdminClaims } from '@/utils/auth';
@@ -56,12 +57,13 @@ import { getAdminClaims } from '@/utils/auth';
  * 걷어냈다. 그 자리에 (그때는 집계 API 가 없어 못 넣었던) 지표를 넣는다.
  *
  * 🔴 이 화면이 목숨 걸고 지켜야 하는 것은 **"0" 과 "아직 없음" 을 구분하는 것**이다.
- * 셋 다 다른 사건이고 화면에서 다르게 보여야 한다:
+ * 전부 다른 사건이고 화면에서 다르게 보여야 한다:
  *   - 값이 0        → '0'
- *   - 집계 전(오늘) → '집계 중' 배지 + `—`, 추이 선은 끊는다
- *   - 데이터 없음   → `—`, 추이 선은 끊는다
+ *   - 집계 전       → '집계 중' 배지 + `—`, 추이 선은 끊는다
+ *   - 데이터 없음   → '데이터 없음' 배지 + `—`, 추이 선은 끊는다 (배치가 죽은 신호다)
+ *   - 누계 끊김     → '누계 끊김' 배지. 누적선만 끊고 그날 증분은 그대로 그린다
  * 오늘을 0 으로 그리는 순간 운영자는 "오늘 서비스가 죽었다"고 읽는다. 이 화면에서 가장
- * 흔한 사고다. 판정 규칙은 전부 src/lib/metrics.js 에 모여 있다.
+ * 흔한 사고다. **판정 규칙은 전부 src/lib/metrics.js 에 모여 있다 — 여기에 다시 쓰지 마라.**
  *
  * 권한: 메뉴에는 permission 이 없다(홈이 막히면 라우트 가드가 무한 루프가 된다).
  * 대신 지표 API 가 `metrics` 권한으로 막히고, 403 이면 안내 + 접근 가능한 메뉴 목록을 보여준다.
@@ -155,23 +157,31 @@ function ChartTooltip({ active, payload, label, series }) {
       <p className="text-xs font-semibold text-popover-foreground">{row.date ?? label}</p>
       {row.pending || row.missing ? (
         <p className="mt-1 text-xs text-muted-foreground">
-          {row.pending ? '아직 집계 전입니다' : '데이터가 없는 날입니다'}
+          {row.pending ? '아직 집계 전입니다' : '데이터가 없는 날입니다 (집계가 밀렸습니다)'}
         </p>
       ) : (
-        <ul className="mt-1 space-y-0.5">
-          {series.map((item) => (
-            <li key={item.dataKey} className="flex items-center gap-2 text-xs">
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: item.color }}
-              />
-              <span className="text-muted-foreground">{item.label}</span>
-              <span className="ml-auto font-medium text-popover-foreground">
-                {formatCount(row[item.dataKey])}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="mt-1 space-y-0.5">
+            {series.map((item) => (
+              <li key={item.dataKey} className="flex items-center gap-2 text-xs">
+                <span
+                  className="size-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: item.color }}
+                />
+                <span className="text-muted-foreground">{item.label}</span>
+                <span className="ml-auto font-medium text-popover-foreground">
+                  {formatCount(row[item.dataKey])}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {/* 누계만 못 믿는 날. 증분은 위에 그대로 숫자로 나와 있으므로 누계 쪽만 짚어 준다. */}
+          {row.cumulativeGap && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              누계를 전날에서 이어받지 못한 날입니다 (증분만 유효)
+            </p>
+          )}
+        </>
       )}
     </div>
   );
@@ -431,11 +441,9 @@ export default function Dashboard() {
   const rollup = summary?.rollup ?? null;
   const live = summary?.live ?? null;
 
-  // 서버가 어디까지 접었는지(rollup.date)를 기준으로 각 날의 상태를 정한다
-  const decorated = useMemo(
-    () => decorateDays(days, { rollupDate: rollup?.date }),
-    [days, rollup]
-  );
+  // 각 날의 상태(집계 중 / 데이터 없음 / 누계 끊김)는 metrics.js 가 시계 기준으로 정한다.
+  // rollup.date 는 여기 안 들어간다 — 배치가 멈추면 그 날짜도 같이 멈춰서 판정이 거짓말을 한다.
+  const decorated = useMemo(() => decorateDays(days), [days]);
 
   /** 표는 최신순으로 본다. 차트는 시간순이어야 하므로 뒤집지 않는다. */
   const tableDays = useMemo(() => [...decorated].reverse(), [decorated]);
@@ -449,7 +457,10 @@ export default function Dashboard() {
         label: shortDateLabel(day.date),
         pending: day.pending,
         missing: day.missing,
+        // 누계 끊김은 이 차트에만 실린다(누적선을 가진 차트가 여기뿐이다). 툴팁이 이 값을 본다.
+        cumulativeGap: day.cumulativeGap,
         daily: metricValue(day, trend.group, trend.field),
+        // gap 인 날은 metricValue 가 null 을 준다 → 누적선이 그 날에서 끊긴다
         cumulative: metricValue(day, 'cumulative', trend.cumulative),
       })),
     [decorated, trend]
@@ -494,6 +505,8 @@ export default function Dashboard() {
 
   const asOfLabel = formatKstDateTime(live?.asOf);
   const hasRollup = Boolean(rollup);
+  // 요약의 DAU/WAU/MAU 를 숫자로 믿어도 되는가(방문 계측 이전이면 0 이 실려 온다)
+  const viewersUsable = summaryViewersUsable(rollup);
   const chartsLoading = summaryLoading || daysLoading;
 
   return (
@@ -596,17 +609,29 @@ export default function Dashboard() {
             spark={sparkOf('users', 'new')}
           />
           {/* 활동회원만 증감을 적지 않는다. DAU/WAU/MAU 는 이동 구간이라 날짜별로 더하거나
-              빼면 같은 사람을 여러 번 세게 되고, "기간 증감"이라는 말 자체가 성립하지 않는다. */}
+              빼면 같은 사람을 여러 번 세게 되고, "기간 증감"이라는 말 자체가 성립하지 않는다.
+
+              viewersMissing 인 날은 서버가 셋을 **0 으로 실어 보낸다**. 그 0 을 그대로 그리면
+              같은 화면의 일자별 표(metricValue 를 거쳐 `—`)와 카드가 서로 다른 말을 한다.
+              판정은 summaryViewersUsable() 하나만 본다. 기여자는 그날에도 유효하므로 남긴다. */}
           <KpiCard
             title="활동회원 (MAU)"
-            basis={hasRollup ? `${rollup.date} 집계 기준` : '집계 전'}
-            value={rollup?.activeUsers?.mau}
+            basis={
+              !hasRollup
+                ? '집계 전'
+                : viewersUsable
+                  ? `${rollup.date} 집계 기준`
+                  : `${rollup.date} 집계 · 방문 계측 이전`
+            }
+            value={viewersUsable ? rollup.activeUsers?.mau : null}
             note={
-              hasRollup
-                ? `DAU ${formatCount(rollup.activeUsers?.dau)} · WAU ${formatCount(
-                    rollup.activeUsers?.wau
-                  )}`
-                : '아직 집계된 데이터가 없습니다'
+              !hasRollup
+                ? '아직 집계된 데이터가 없습니다'
+                : viewersUsable
+                  ? `DAU ${formatCount(rollup.activeUsers?.dau)} · WAU ${formatCount(
+                      rollup.activeUsers?.wau
+                    )}`
+                  : 'DAU·WAU·MAU를 셀 수 없는 날입니다'
             }
             detail={
               hasRollup ? `기여자 ${formatCount(rollup.activeUsers?.contributors)}` : undefined
@@ -941,11 +966,36 @@ export default function Dashboard() {
                   tableDays.map((day) => (
                     <TableRow key={day.date}>
                       <TableCell className="py-3 pl-5 font-mono text-xs text-muted-foreground">
-                        <span className="flex items-center gap-2">
+                        {/* 배지 세 종류는 서로 다른 사건이다. 특히 '데이터 없음' 은
+                            집계 시각이 지났는데도 비어 있다는 뜻이라 배치를 봐야 한다는 신호다 —
+                            '집계 중' 과 같은 모양으로 두면 운영자가 정상으로 읽고 넘어간다. */}
+                        <span className="flex flex-wrap items-center gap-2">
                           {day.date}
                           {day.pending && (
-                            <Badge variant="secondary" className="font-sans font-normal">
+                            <Badge
+                              variant="secondary"
+                              className="font-sans font-normal"
+                              title="아직 집계될 시각(다음 날 04:00 KST)이 지나지 않았습니다"
+                            >
                               집계 중
+                            </Badge>
+                          )}
+                          {day.missing && (
+                            <Badge
+                              variant="outline"
+                              className="border-destructive/50 font-sans font-normal text-destructive"
+                              title="집계 시각이 지났는데도 이 날의 집계 결과가 없습니다"
+                            >
+                              데이터 없음
+                            </Badge>
+                          )}
+                          {day.cumulativeGap && (
+                            <Badge
+                              variant="outline"
+                              className="font-sans font-normal"
+                              title="누계를 전날에서 이어받지 못했습니다. 이 날의 증분은 유효합니다"
+                            >
+                              누계 끊김
                             </Badge>
                           )}
                         </span>

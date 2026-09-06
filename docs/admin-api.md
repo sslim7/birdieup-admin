@@ -538,10 +538,8 @@ res 200 {
   },
   rollup: {                                  // 야간 배치가 접어 둔 값. 없으면 null
     date: "2026-09-05",                      // 마지막으로 집계가 끝난 날 (KST)
-    activeUsers: { dau, wau, mau, contributors },
-    cumulative:  { users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions },
-    yesterday:   { users: {...}, friends: {...}, rounds: {...}, feeds: {...}, reactions: {...} },
-    last7d:      { users: {...}, friends: {...}, rounds: {...}, feeds: {...}, reactions: {...} }
+    activeUsers: { dau, wau, mau, contributors, viewersMissing?: true },
+    cumulative:  { users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions }
   }
 }
 ```
@@ -552,6 +550,17 @@ res 200 {
 - `live` 는 롤업과 무관하게 언제나 온다. `rollup` 이 null 이어도 누적 카드는 그릴 수 있다.
 - `activeUsers.dau|wau|mau` 는 `rollup.date` 기준의 **이동 구간** 값이다. 누적값이 아니므로
   "기간 증감"을 계산하지 마라 — 구간이 겹쳐서 뺄셈이 성립하지 않는다.
+- ⚠ **`activeUsers.viewersMissing: true` 는 `rollup.date` 가 방문 계측(`daily_actives`)
+  시작 이전이라는 표식이다.** 백필로 채운 날이 그렇다(§8.3 의 같은 표식과 뜻이 같다).
+  이때도 **`dau` / `wau` / `mau` 는 언제나 온다 — 값은 0 이다.** 필드가 빠지지 않는다.
+  화면은 **그 0 을 값으로 쓰면 안 된다** — `—` 로 그린다.
+  같은 날의 `contributors` 는 유효하다(쓰기 기록은 뒤늦게도 셀 수 있다). 함께 지우지 마라.
+  서버가 `omitempty` 로 셋을 지우는 안은 채택하지 않았다. 그러면 계측 이후에 **진짜로**
+  아무도 안 온 날의 `0` 까지 사라져서, 0 과 없음을 구분한다는 이 API 의 전제가 깨진다.
+- **`yesterday` / `last7d` 는 없다.** 화면의 "기간 증감"은 §8.3 `daily` 응답을 클라이언트가
+  직접 더해서 만든다. 서버가 접어 주던 7일 합계는 빠진 날을 조용히 건너뛰어 **가만히
+  작은 수**를 내놓았다 — 값이 없는 날을 0 처럼 취급하는 셈이라 이 API 의 전제를 어긴다.
+  빠뜨린 것이 아니라 **일부러 뺀 것이니 다시 넣지 마라.**
 
 ### 8.3 일자별
 
@@ -567,7 +576,8 @@ res 200 { days: [
                  byBetType: { stroke, holecost, friendly, skins } },
     feeds:     { created, messages, emoticons, system, youtube, photos, videos, deleted },
     reactions: { created },
-    cumulative:{ users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions } },
+    cumulative:{ users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions },
+    cumulativeGap?: true },
   { date: "2026-09-02", missing: true }
 ] }
 ```
@@ -578,11 +588,21 @@ res 200 { days: [
 - ⚠ **`missing: true` 인 날은 그날 롤업 문서가 없다는 뜻이고, `missing` 과 `date` 외의
   필드는 오지 않는다.** 0 으로 채워 그리지 마라 — 표에는 `—`, 추이 선은 끊는다.
   아직 집계 전인 오늘, 배치가 실패한 날, 서비스 이전의 날이 전부 여기 걸린다.
+  **서버는 이 셋을 구분해 주지 않는다.** 화면이 시계로 갈라야 한다 — 날짜 D 의 집계 시각은
+  `D+1일 04:00 (KST)` 이므로, 그 시각 전이면 "집계 중"이고 지났는데도 비어 있으면
+  "데이터 없음"이다. 밀린 날을 전부 "집계 중"으로 그리면 **배치가 죽어도 화면이 조용하다.**
 - ⚠ **`active.viewersMissing: true` 는 그날 방문 계측(`daily_actives`)이 없다는 표식이다.**
   과거를 백필로 채운 날이 그렇다 — 피드·라운드 같은 쓰기 기록은 뒤늦게도 셀 수 있지만
   "그날 누가 앱을 열었는가"는 그때 찍어 두지 않으면 복원할 수 없다.
-  이 표식이 오면 `viewersDau` / `viewersWau` / `viewersMau` 는 아예 오지 않으므로
-  **그 세 지표만** `—` 로 그린다. 같은 날의 `contributors` 와 나머지 지표는 유효하다.
+  이때도 **`viewersDau` / `viewersWau` / `viewersMau` 는 언제나 온다 — 값은 0 이다.**
+  필드가 빠지지 않으니 존재 여부로 판정하지 마라. 이 표식이 서면 **그 0 을 값으로 쓰지 말고**
+  세 지표만 `—` 로 그린다. 같은 날의 `contributors` 와 나머지 지표는 유효하다.
+  (`omitempty` 로 지우지 않는 이유는 §8.2 에 적어 두었다.)
+- ⚠ **`cumulativeGap: true` 는 그날 누계를 전날에서 이어받지 못했다는 표식이다.** 배치가
+  하루 멈추면 다음 날이 이렇게 된다. 그날 `cumulative.*` 는 실제보다 훨씬 작으므로
+  **숫자로 믿으면 안 된다** — 누적 선을 그 날에서 끊고 표에는 표식을 단다.
+  ⚠ **그날의 증분(`users.new` / `rounds.started` / `feeds.created` …)은 유효하다.**
+  못 믿는 것은 `cumulative` 뿐이니 증분까지 지우지 마라.
 - `feeds.created` 는 그날 만들어진 피드 전체이고 `messages`/`emoticons`/`system`/`youtube` 는
   그 내역이다. `photos`/`videos` 는 그 피드에 붙은 **미디어 개수**라서 피드 수와 합이 맞지 않는다.
 - `rounds.byBetType` 의 키는 앱의 내기 방식과 같다(`stroke` 스트로크 / `holecost` 홀당 / `friendly` 친선 / `skins` 스킨스).

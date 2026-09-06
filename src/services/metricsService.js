@@ -23,22 +23,28 @@ import apiClient from './apiClient';
  *      },
  *      rollup: {                     // 야간 배치가 접어 둔 값. **없으면 null**
  *        date,                       // 마지막으로 집계가 끝난 날 (KST, 보통 어제)
- *        activeUsers: { dau, wau, mau, contributors },
- *        cumulative: { users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions },
- *        yesterday: {...}, last7d: {...}
+ *        activeUsers: { dau, wau, mau, contributors, viewersMissing?: true },
+ *        cumulative: { users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions }
  *      }
  *    }
  *
- * 2) 일자별  GET /admin/metrics/daily?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
- *    200 { days: [{ date, missing, users, active, friends, rounds, feeds, reactions, cumulative }] }
+ *    `yesterday` / `last7d` 는 계약에 없다. 화면의 "기간 증감"은 아래 daily 응답을 직접
+ *    더해서 만든다 — 서버 쪽 7일 합계는 빠진 날을 조용히 건너뛰어 가만히 작은 수를 냈다.
  *
- * 🔴 이 API 를 다룰 때 절대 뭉개면 안 되는 두 가지:
+ * 2) 일자별  GET /admin/metrics/daily?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+ *    200 { days: [{ date, missing, users, active, friends, rounds, feeds, reactions,
+ *                   cumulative, cumulativeGap?: true }] }
+ *
+ * 🔴 이 API 를 다룰 때 절대 뭉개면 안 되는 네 가지:
  *
  *   - **`rollup: null` 은 "지표가 0" 이 아니라 "아직 한 번도 집계되지 않았다" 는 뜻이다.**
  *     0 으로 채워 내려 주지 마라. 화면이 두 상태를 구분할 수 없게 된다.
  *   - **`missing: true` 인 날은 그날 롤업 문서가 없다는 뜻이고 다른 필드가 아예 오지 않는다.**
  *     아직 집계 전인 오늘, 배치가 실패한 날, 서비스 이전의 날이 전부 여기 걸린다.
  *     0 으로 그리면 "오늘 뚝 떨어졌다"로 읽힌다.
+ *   - **`viewersMissing: true` 여도 viewersDau/Wau/Mau(요약은 dau/wau/mau)는 0 으로 온다.**
+ *     필드 존재 여부로 판정하면 그 0 이 그대로 화면에 그려진다. 표식을 봐야 한다.
+ *   - **`cumulativeGap: true` 인 날은 누계만 못 믿는다.** 그날 증분은 유효하다.
  *
  * 그래서 이 파일은 응답을 **정규화하지 않는다.** 빠진 필드를 0 으로 메우는 순간
  * 두 상태의 구분이 사라지기 때문이다. 배열/객체 모양만 보장하고 값은 그대로 넘긴다.

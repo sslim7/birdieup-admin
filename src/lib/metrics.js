@@ -5,14 +5,45 @@
  * 표·차트·CSV 세 군데에 흩어지면 반드시 한 군데가 어긋나기 때문이다.
  * 그 규칙을 여기 한곳에 모아 두고, 세 곳이 전부 이 함수들만 거치게 한다.
  *
- * 값이 없다는 것은 이 화면에서 두 가지 서로 다른 사건이다(docs/admin-api.md §8):
- *   - **집계 중(pending)**: 아직 롤업이 돌지 않은 날. 대개 오늘.
- *   - **데이터 없음(missing)**: 롤업 문서가 없는 날. 배치 실패나 서비스 이전의 날.
- * 둘 다 숫자가 아니라 `null` 로 만들어 화면이 `—` 를 찍고 추이 선을 끊게 한다.
+ * 값이 없다는 것은 이 화면에서 서로 다른 세 가지 사건이다(docs/admin-api.md §8):
+ *   - **집계 중(pending)**: 아직 집계될 시각이 오지 않은 날. 오늘, 그리고 04:00 전이면 어제까지.
+ *   - **데이터 없음(missing)**: 집계 시각이 지났는데도 롤업 문서가 없는 날.
+ *     배치 실패나 서비스 이전의 날이 여기 걸린다.
+ *   - **누계 끊김(cumulativeGap)**: 그날 누계를 전날에서 이어받지 못한 날.
+ *     그날의 증분은 유효하고 `cumulative` 만 못 믿는다.
+ * 전부 숫자가 아니라 `null` 로 만들어 화면이 `—` 를 찍고 추이 선을 끊게 한다.
+ *
+ * 🔴 pending 과 missing 을 뭉개면 **배치가 죽어도 화면이 "집계 중"이라고 안심시킨다.**
+ * 그래서 판정 기준을 서버가 어디까지 접었는지(rollup.date)가 아니라 **시계**로 잡는다.
  */
 
 /** 지표의 하루는 KST 기준이다. 서버(§8)도, 활동 로그(§5)도 같은 기준을 쓴다. */
 const KST_TIME_ZONE = 'Asia/Seoul';
+
+/**
+ * 롤업 배치가 도는 시각(KST). 그날 04:00 에 **전날치**를 접는다.
+ *
+ * 이 숫자는 인프라에 묶여 있다 — birdieup-terraform `production/scheduler.tf` 의
+ * `google_cloud_scheduler_job.metrics_rollup` 이 `schedule = "0 4 * * *"` /
+ * `time_zone = "Asia/Seoul"` 로 걸려 있다. **스케줄을 바꾸면 여기도 같이 바꿔야 한다.**
+ * 안 바꾸면 화면이 "집계 중"과 "데이터 없음"을 반대로 말한다.
+ */
+const ROLLUP_HOUR_KST = 4;
+
+/**
+ * 배치가 끝나기를 기다려 주는 여유(분).
+ *
+ * 04:00 은 잡이 **시작**하는 시각이지 끝나는 시각이 아니다. 여유가 없으면 04:00 정각부터
+ * 집계가 끝나기 전까지 어제가 「데이터 없음」으로 보인다 — 배치는 멀쩡히 도는 중인데
+ * 화면만 실패라고 말하는 오탐이다.
+ *
+ * 30분은 실제 소요시간이 아니라 **상한**에서 왔다. Cloud Run 의 요청 타임아웃이 60초라
+ * 잡 한 번은 아무리 늦어도 60초에 끊기고, 스케줄러가 세 번까지 재시도한다
+ * (birdieup-terraform `production/scheduler.tf`). 디스패치 지터를 얹어도 몇 분이면 끝난다.
+ * 넉넉히 잡는 쪽이 안전하다 — 이 여유가 늦추는 것은 「배치가 죽었다」는 신고뿐이고,
+ * 그 신고가 30분 늦는 대가는 매일 아침 오탐 한 번보다 싸다.
+ */
+const ROLLUP_GRACE_MINUTES = 30;
 
 /**
  * 'YYYY-MM-DD' 포맷터.
@@ -28,6 +59,35 @@ const KST_DATE_FORMAT = new Intl.DateTimeFormat('sv-SE', {
 /** 오늘(KST) 날짜를 'YYYY-MM-DD' 로 돌려준다. */
 export function todayKst() {
   return KST_DATE_FORMAT.format(new Date());
+}
+
+/**
+ * 지금(KST)의 날짜와 시(0~23).
+ *
+ * 문자열을 잘라 쓰지 않고 formatToParts 로 꺼낸다 — 로케일이 끼워 넣는 구분자는
+ * 엔진마다 달라서 자릿수로 자르면 언젠가 조용히 어긋난다.
+ */
+const KST_DATE_HOUR_FORMAT = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: KST_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+function nowKst(now = new Date()) {
+  const parts = Object.fromEntries(
+    KST_DATE_HOUR_FORMAT.formatToParts(now)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value])
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+  };
 }
 
 /**
@@ -104,27 +164,46 @@ export function formatDelta(value) {
 }
 
 /**
+ * 날짜 D 의 집계가 끝났어야 하는 경계 날짜를 돌려준다.
+ *
+ * 배치는 매일 04:00(KST)에 **전날치**를 접으므로 날짜 D 의 집계 시각은 `D+1일 04:00 KST` 다.
+ * 지금이 04:00 을 지났으면 어제까지, 아직이면 그저께까지가 "이미 나왔어야 하는" 날이다.
+ *
+ * 이 경계를 rollup.date 대신 쓴다. rollup.date 로 판정하면 배치가 사흘 멈췄을 때
+ * 그 사흘이 전부 "집계 중"으로 보여서, **배치가 죽었다는 사실이 화면 어디에도 안 나타난다.**
+ */
+export function lastAggregatedDateKst(now = new Date()) {
+  const { date, hour, minute } = nowKst(now);
+  // 04:00 은 시작 시각이라 여유를 더해 "끝났을 시각" 으로 본다(ROLLUP_GRACE_MINUTES).
+  const rolledUp = hour * 60 + minute >= ROLLUP_HOUR_KST * 60 + ROLLUP_GRACE_MINUTES;
+  return shiftDate(date, rolledUp ? -1 : -2);
+}
+
+/**
  * 응답의 days 에 "이 날을 어떻게 그려야 하는가"를 붙인다.
  *
- * pending 판정은 **rollup.date 를 기준으로 한다** — 서버가 어디까지 접었는지는 서버만 안다.
- * 그날 이후는 아직 집계 전이므로, 값이 딸려 오더라도 반쪽짜리라서 쓰지 않는다.
- * rollup 자체가 없으면(첫 배치 전) 오늘 이후를 집계 전으로 본다.
+ * 서버가 값을 준 날(`missing !== true`)은 그대로 쓴다. 값이 없는 날만 둘로 가른다 —
+ * 집계 시각이 아직 안 온 날은 `pending`, 지났는데도 비어 있으면 진짜 `missing` 이다.
+ * (rollup.date 는 이 판정에 쓰지 않는다. 화면 머리말·카드의 기준 표기용으로만 남았다.)
  */
-export function decorateDays(days, { rollupDate }) {
-  const today = todayKst();
+export function decorateDays(days) {
+  const boundary = lastAggregatedDateKst();
 
   return (days ?? []).map((day) => {
     const date = String(day?.date ?? '');
-    const pending = rollupDate ? date > rollupDate : date >= today;
+    const empty = day?.missing === true;
+    const pending = empty && date > boundary;
 
     return {
       ...day,
       date,
-      // 서버가 명시적으로 missing 을 준 날 + 우리가 아직 집계 전으로 판정한 날
-      missing: Boolean(day?.missing),
+      // 집계 시각이 지났는데도 비어 있는 날. 배치 실패거나 서비스 이전의 날이다.
+      missing: empty && !pending,
       pending,
+      // 누계만 못 믿는 날. 증분은 유효하므로 usable 을 내리지 않는다.
+      cumulativeGap: day?.cumulativeGap === true,
       // 숫자를 꺼내도 되는 날인가. 이 플래그 하나로 표·차트·CSV 가 같은 판단을 한다.
-      usable: !day?.missing && !pending,
+      usable: !empty,
     };
   });
 }
@@ -134,13 +213,32 @@ export function decorateDays(days, { rollupDate }) {
  *
  * 백필로 채운 날은 방문 계측(daily_actives)이 없어 `active.viewersMissing: true` 가 오고,
  * 그때는 viewers* 세 개만 값이 없다(같은 날의 contributors 는 유효하다).
+ * 서버는 그 셋을 **항상 0 으로 실어 보내므로**(§8.3) 이 관문을 안 거치면 0 이 그대로 그려진다.
+ *
+ * `cumulativeGap: true` 인 날은 누계를 전날에서 이어받지 못해 실제보다 훨씬 작다.
+ * 그 날의 `cumulative` 만 버린다 — 같은 날의 증분(신규 가입·라운드·피드…)은 유효하다.
  */
 export function metricValue(day, group, key) {
   if (!day?.usable) return null;
   if (group === 'active' && key.startsWith('viewers') && day.active?.viewersMissing) return null;
+  if (group === 'cumulative' && day.cumulativeGap) return null;
 
   const raw = day[group]?.[key];
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+}
+
+/**
+ * 요약(summary)의 활동회원 숫자를 믿어도 되는가.
+ *
+ * `rollup.date` 가 방문 계측 시작 이전이면 `activeUsers.viewersMissing: true` 가 오는데,
+ * 그때도 `dau`/`wau`/`mau` 는 **0 으로 실려 온다**(서버가 omitempty 를 안 쓴다 — 계측 이후
+ * 진짜로 아무도 안 온 날의 0 을 지우지 않기 위해서다). 그 0 을 그대로 그리면
+ * 배포 다음 날 아침 카드가 "0 / DAU 0 · WAU 0" 으로 뜬다. 카드는 반드시 이 함수를 거친다.
+ *
+ * 같은 날의 `contributors` 는 유효하다(쓰기 기록은 뒤늦게도 셀 수 있다). 함께 지우지 마라.
+ */
+export function summaryViewersUsable(rollup) {
+  return Boolean(rollup) && rollup.activeUsers?.viewersMissing !== true;
 }
 
 /**
