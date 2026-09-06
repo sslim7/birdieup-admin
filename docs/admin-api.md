@@ -514,10 +514,10 @@ res 200 {
 - **오늘은 아직 집계 전이다.** `daily` 의 기간에 오늘이 들어 있어도 오늘 문서는 없어서
   `missing: true` 로 내려간다. 화면은 그 칸을 **0 으로 그리면 안 된다** — 0 으로 그리면
   "오늘 갑자기 뚝 떨어졌다"로 읽힌다. "집계 중"으로 표시한다.
-- 그래서 `live.users.active` 와 `rollup.cumulative.users` 가 어긋나는 것은 **정상**이다.
-  서로 다른 시각의 값이고, 같아야 하는 값이 아니다.
+- 그래서 `live.users.active` 와 §8.3 마지막 날의 `cumulative.users` 가 어긋나는 것은
+  **정상**이다. 서로 다른 시각의 값이고, 같아야 하는 값이 아니다.
 - 날짜는 전부 KST 이고 `dateTo` 는 그날을 **포함**한다(§5 활동 로그와 같은 규칙).
-- 🔴 **사진/동영상 누계(`cumulative.photos` / `cumulative.videos`)는 누적 업로드 수이며 삭제분을 빼지 않는다.**
+- 🔴 **사진/동영상 누계(§8.3 의 `cumulative.photos` / `cumulative.videos`)는 누적 업로드 수이며 삭제분을 빼지 않는다.**
   피드를 지우면 `medias` 문서가 함께 지워져 "몇 장이 지워졌는지"를 나중에 복원할 수 없기 때문이다.
   지금 살아 있는 미디어 수가 필요하면 `live.media.alive` 를 본다(이쪽은 실시간 집계다).
 
@@ -538,8 +538,7 @@ res 200 {
   },
   rollup: {                                  // 야간 배치가 접어 둔 값. 없으면 null
     date: "2026-09-05",                      // 마지막으로 집계가 끝난 날 (KST)
-    activeUsers: { dau, wau, mau, contributors, viewersMissing?: true },
-    cumulative:  { users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions }
+    activeUsers: { dau, wau, mau, contributors, viewersMissing?: true }
   }
 }
 ```
@@ -557,10 +556,14 @@ res 200 {
   같은 날의 `contributors` 는 유효하다(쓰기 기록은 뒤늦게도 셀 수 있다). 함께 지우지 마라.
   서버가 `omitempty` 로 셋을 지우는 안은 채택하지 않았다. 그러면 계측 이후에 **진짜로**
   아무도 안 온 날의 `0` 까지 사라져서, 0 과 없음을 구분한다는 이 API 의 전제가 깨진다.
-- **`yesterday` / `last7d` 는 없다.** 화면의 "기간 증감"은 §8.3 `daily` 응답을 클라이언트가
-  직접 더해서 만든다. 서버가 접어 주던 7일 합계는 빠진 날을 조용히 건너뛰어 **가만히
-  작은 수**를 내놓았다 — 값이 없는 날을 0 처럼 취급하는 셈이라 이 API 의 전제를 어긴다.
-  빠뜨린 것이 아니라 **일부러 뺀 것이니 다시 넣지 마라.**
+- **`yesterday` / `last7d` / `cumulative` 는 없다.** 셋 다 화면이 §8.3 `daily` 응답으로
+  직접 만든다. **빠뜨린 것이 아니라 일부러 뺀 것이니 다시 넣지 마라.**
+  - 기간 증감: 서버가 접어 주던 7일 합계는 빠진 날을 조용히 건너뛰어 **가만히 작은 수**를
+    내놓았다 — 값이 없는 날을 0 처럼 취급하는 셈이라 이 API 의 전제를 어긴다. `daily` 에는
+    `missing: true` 한 칸이 있어 화면이 몇 날을 놓쳤는지 안다.
+  - 누계: 누적 꺾은선은 §8.3 의 **날짜별** `cumulative` 로 그린다(그래야 날마다 점이 찍힌다).
+    요약의 누계는 그 시계열의 마지막 점과 같은 값이라, 두 자리에 같은 수를 두면 언젠가 한쪽만
+    고쳐져 서로 다른 말을 한다.
 
 ### 8.3 일자별
 

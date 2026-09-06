@@ -23,13 +23,13 @@ import apiClient from './apiClient';
  *      },
  *      rollup: {                     // 야간 배치가 접어 둔 값. **없으면 null**
  *        date,                       // 마지막으로 집계가 끝난 날 (KST, 보통 어제)
- *        activeUsers: { dau, wau, mau, contributors, viewersMissing?: true },
- *        cumulative: { users, usersActive, friends, rounds, feeds, messages, photos, videos, reactions }
+ *        activeUsers: { dau, wau, mau, contributors, viewersMissing?: true }
  *      }
  *    }
  *
- *    `yesterday` / `last7d` 는 계약에 없다. 화면의 "기간 증감"은 아래 daily 응답을 직접
- *    더해서 만든다 — 서버 쪽 7일 합계는 빠진 날을 조용히 건너뛰어 가만히 작은 수를 냈다.
+ *    `yesterday` / `last7d` / `cumulative` 는 계약에 없다. 셋 다 아래 daily 응답으로 화면이
+ *    직접 만든다 — 서버 쪽 7일 합계는 빠진 날을 조용히 건너뛰어 가만히 작은 수를 냈고,
+ *    누적 꺾은선은 날짜별 cumulative 로 그려야 날마다 점이 찍힌다.
  *
  * 2) 일자별  GET /admin/metrics/daily?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
  *    200 { days: [{ date, missing, users, active, friends, rounds, feeds, reactions,
