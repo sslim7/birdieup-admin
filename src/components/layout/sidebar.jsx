@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell,
   ChevronRight,
-  Home,
+  LayoutDashboard,
   LogOut,
   Megaphone,
   MessageSquareHeart,
@@ -28,7 +28,7 @@ import { getAdminClaims, deleteToken } from '@/utils/auth';
 const iconMap = {
   Bell,
   ChevronRight,
-  Home,
+  LayoutDashboard,
   Megaphone,
   MessageSquareHeart,
   ScrollText,

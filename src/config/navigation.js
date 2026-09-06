@@ -13,7 +13,7 @@
  *     키는 href 의 슬래시를 하이픈으로 바꾼 값이다('/posts/notices' → 'posts-notices').
  *     isAdmin 계정은 permissions 와 무관하게 전 메뉴에 접근한다.
  *   - adminOnly: isAdmin 계정만 접근 가능(백엔드도 비-admin 에게 403 을 준다).
- *   - 둘 다 없는 항목(홈)은 로그인한 누구나 접근한다.
+ *   - 둘 다 없는 항목(대시보드=홈)은 로그인한 누구나 접근한다. 이유는 METRICS_PERMISSION 주석 참고.
  */
 
 /** NavEntry 가 그룹인지 판별 */
@@ -23,7 +23,7 @@ export function isNavGroup(entry) {
 
 export const navigation = {
   main: [
-    { label: '홈', href: '/', icon: 'Home' },
+    { label: '대시보드', href: '/', icon: 'LayoutDashboard' },
     {
       label: '소식',
       icon: 'Megaphone',
@@ -58,11 +58,28 @@ export function canAccessItem(item, claims) {
 }
 
 /**
- * 권한 부여 UI(사용자 관리)에서 쓰는 선택지 목록.
- * navigation.main 에서 홈(permission 없음)을 뺀 전 항목을 { key, label } 로 평탄화한다.
- * 그룹 자식은 "그룹라벨 - 아이템라벨", 최상위 단독 항목은 자기 라벨을 그대로 쓴다.
+ * 지표 대시보드(홈) 데이터 조회 권한 키.
+ *
+ * 🔴 **이 키를 navigation 의 홈 항목에 permission 으로 달면 안 된다.**
+ * 라우트 가드(App.jsx 의 RequireMenuPermission)는 권한 없는 경로를 홈으로 되돌리는데,
+ * 그 홈까지 막히면 홈 → 홈으로 무한 리다이렉트가 된다. 로그인 후 착지점은 누구나
+ * 열려 있어야 하므로 화면은 열어 두고, 지표 **API** 만 이 키로 막는다.
+ * 최종 판정자는 서버다 — 권한이 없으면 GET /admin/metrics/* 가 403 을 준다(docs/admin-api.md §8).
  */
-export const permissionOptions = navigation.main.flatMap((entry) => {
+export const METRICS_PERMISSION = 'metrics';
+
+/**
+ * navigation 에서 파생되지 않는 권한 키들.
+ *
+ * permissionOptions 는 원래 navigation.main 에서만 파생됐는데, 그러면 메뉴에 permission 을
+ * 달 수 없는 지표 권한이 권한 부여 UI 에서 통째로 사라진다. 그래서 파생분 **앞에** 얹는다.
+ */
+const standalonePermissionOptions = [
+  { key: METRICS_PERMISSION, label: '대시보드 - 지표' },
+];
+
+/** navigation.main 에서 파생되는 권한 선택지 (그룹 자식은 "그룹라벨 - 아이템라벨") */
+const derivedPermissionOptions = navigation.main.flatMap((entry) => {
   if (isNavGroup(entry)) {
     return entry.children
       .filter((child) => Boolean(child.permission))
@@ -73,6 +90,26 @@ export const permissionOptions = navigation.main.flatMap((entry) => {
   }
   return entry.permission ? [{ key: entry.permission, label: entry.label }] : [];
 });
+
+/**
+ * 권한 부여 UI(사용자 관리)에서 쓰는 선택지 목록.
+ * 메뉴에서 파생되는 키(공지·업데이트·제안·이모티콘)에 메뉴 밖 키(지표)를 앞에 붙인 것이다.
+ */
+export const permissionOptions = [
+  ...standalonePermissionOptions,
+  ...derivedPermissionOptions,
+];
+
+/**
+ * 지표 API 를 부를 수 있는 계정인지 판정한다.
+ *
+ * 화면은 이걸로 403 이 뻔한 요청을 아예 보내지 않는 데만 쓴다. 클레임은 로그인 시점에
+ * 굳은 값이라 권한이 방금 회수됐어도 true 가 나올 수 있으므로, 호출부는 응답의 403 도
+ * 함께 처리해야 한다.
+ */
+export function canAccessMetrics(claims) {
+  return Boolean(claims?.isAdmin) || Boolean(claims?.permissions?.[METRICS_PERMISSION]);
+}
 
 /** NavEntry[] 를 NavItem[] 으로 평탄화 (그룹의 children 을 펼친다) */
 export function flattenEntries(entries) {
