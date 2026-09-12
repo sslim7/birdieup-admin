@@ -9,6 +9,9 @@ substitutions:
   # VITE_* 는 빌드 시점에 번들로 인라인됩니다. Cloud Run 환경변수로는 전혀 먹지 않으므로
   # 반드시 여기서 --build-arg 로 넘겨야 합니다. 값이 바뀌면 이미지 재빌드가 필요합니다.
   _VITE_API_BASE_URL: https://api.birdieup.kr
+  # 구글 지도 키. 저장소에 값을 적지 않고 **빌드 트리거의 substitutions 에서 덮어쓴다.**
+  # 비워 두면 「장면 위치 보정」 화면이 지도 없이(좌표 직접 입력만) 동작한다.
+  _VITE_GOOGLE_MAPS_API_KEY: ''
 
 steps:
   - id: build
@@ -20,6 +23,7 @@ steps:
       - -t
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
       - --build-arg=VITE_API_BASE_URL=${_VITE_API_BASE_URL}
+      - --build-arg=VITE_GOOGLE_MAPS_API_KEY=${_VITE_GOOGLE_MAPS_API_KEY}
       - .
 
   - id: push

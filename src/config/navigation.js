@@ -38,6 +38,9 @@ export const navigation = {
   system: [
     { label: '사용자 관리', href: '/users', icon: 'UserCog', adminOnly: true },
     { label: '활동 로그', href: '/audit-logs', icon: 'ScrollText', adminOnly: true },
+    // 옛 첨부의 좌표·촬영일시를 손으로 채우는 **임시 보정 도구**(SceneFixes.jsx 머리 주석 참고).
+    // 서버도 AdminOnly 로 막으므로 permission 키를 만들지 않고 adminOnly 로 둔다.
+    { label: '장면 위치 보정', href: '/scene-fixes', icon: 'MapPinned', adminOnly: true },
   ],
 };
 

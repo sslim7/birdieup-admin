@@ -23,6 +23,7 @@ const SuggestionDetail = lazy(() => import("./pages/SuggestionDetail"));
 const Emoticons = lazy(() => import("./pages/Emoticons"));
 const UserManagement = lazy(() => import("./pages/UserManagement"));
 const AuditLogs = lazy(() => import("./pages/AuditLogs"));
+const SceneFixes = lazy(() => import("./pages/SceneFixes"));
 const ChangePassword = lazy(() => import("./pages/ChangePassword"));
 
 const pageRoutes = [
@@ -34,6 +35,7 @@ const pageRoutes = [
     { path: "/emoticons", component: Emoticons },
     { path: "/users", component: UserManagement },
     { path: "/audit-logs", component: AuditLogs },
+    { path: "/scene-fixes", component: SceneFixes },
 ];
 
 /** lazy 페이지가 로딩되는 동안 셸 안에 표시되는 스켈레톤 */
