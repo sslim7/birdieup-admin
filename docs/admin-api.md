@@ -412,7 +412,7 @@ res 200 {
   logs: [{
     auditLogId, adminId, adminName, adminEmail,
     actions: "POST /admin/posts",     // "METHOD 경로"
-    targets: "posts",                 // 도메인 (admin|auth|posts|suggestions|emoticons)
+    targets: "posts",                 // 도메인 (admin|auth|posts|suggestions|emoticons|metrics|scenes)
     details: { status: number, body: object },   // password 계열은 서버가 [REDACTED]
     ipAddress, createdAt
   }],
@@ -611,3 +611,135 @@ res 200 { days: [
 - `rounds.byBetType` 의 키는 앱의 내기 방식과 같다(`stroke` 스트로크 / `holecost` 홀당 / `friendly` 친선 / `skins` 스킨스).
   새 방식이 생기면 키가 늘어난다 — 화면은 **모르는 키를 만나도 깨지지 않아야** 한다.
 - 구간이 넓으면 응답이 그만큼 길어진다. 화면 기본값은 7 / 30 / 90 일이다.
+
+---
+
+## 9. 장면 좌표 보정 (scenes)
+
+**`isAdmin` 전용이다.** 권한 키가 없다 — 남의 사진과 **좌표**를 통째로 훑어 보여 주는
+자리이고, 뒤에 적은 대로 오래 살아남을 화면이 아니라서 `navigation.js` 에 키를 새로 파지
+않았다. 사이드바에 넣는다면 `isAdmin` 일 때만 그린다.
+
+> ⚠ **이건 임시 도구다.** 좌표·촬영시각은 올릴 때 브라우저가 EXIF 에서 뽑아 보내는데,
+> 그 길이 생기기 전에 올라간 사진에는 값이 없고 **원본 파일에서도 이미 떨어져 나갔다**
+> (picker 가 EXIF 를 떼고 넘긴다). 서버가 되찾을 방법이 없어, 남은 길은 올린 사람이
+> 기억하는 자리를 손으로 찍어 넣는 것뿐이다. 옛 사진 보정이 끝나면 쓸 일이 거의 없어진다.
+> 그래서 서버도 화면도 **얇게 만든다** — 동시 편집 잠금, 기능 플래그, 상태 기계는 넣지 않는다.
+> 쓰는 사람은 한 명이다.
+
+| Method | Path |
+|---|---|
+| GET | `/admin/scenes/pending` |
+| POST | `/admin/scenes/locate` |
+
+### 9.1 보정 대상 목록
+
+```
+GET /admin/scenes/pending?limit=20&cursor=<opaque>&missing=location|time|any|fixed
+
+res 200 {
+  items: [{
+    sourceType: "ROUND"|"LIFE",
+    sourceId:   string,        // roundId | boardId
+    sourceName: string,        // 골프장명 | 생활피드 제목 — 빈 문자열일 수 있다
+    feedId:     string,
+    storagePath:string,        // 첨부를 특정하는 키
+    mediaKind:  "photo"|"video",
+    thumbUrl:   string,        // 썸네일이 없으면 원본 URL 이 들어온다
+    url:        string,        // 원본
+    authorName: string,
+    uploadedAt: string,        // RFC3339 — 글이 올라온 때(찍힌 때가 아니다)
+    hasLocation:boolean,
+    hasTakenAt: boolean,
+    latitude?:  number,        // 지금 들어 있는 값 — 없으면 키가 빠진다
+    longitude?: number,        // 〃
+    takenLocal?:string         // "2026-09-05 14:32:10" — 〃
+  }],
+  nextCursor?: string
+}
+```
+
+- `missing` 기본값은 `any`(좌표 **또는** 촬영일이 없는 것). `location` 은 좌표 없는 것만,
+  `time` 은 촬영일 없는 것만. 그 넷이 아니면 400.
+- 🔴 **`fixed` 는 「보정 완료」다** — 빠진 것이 아니라 **이미 채운 것**을 찾는다. 정확히는
+  `locationSource == "manual"`, 곧 **사람이 이 화면에서 넣은 좌표**다. 자동으로 잡힌 좌표
+  (`exif` / `container`)는 여기 오지 않는다 — 되돌릴 대상이 아니고, 섞이면 목록이 원래
+  멀쩡하던 사진으로 뒤덮여 고칠 것을 찾을 수 없다.
+  **이 갈래가 없으면 §9.2 의 `clearLocation` 을 쓸 수가 없다.** 좌표를 넣는 순간 그 첨부가
+  나머지 세 갈래에서 전부 빠져 다시 닿을 길이 사라지기 때문이다. 잘못 찍은 자리를 되돌리는
+  유일한 입구이므로 **화면의 필터에 반드시 넣어라.**
+  응답 항목의 모양은 그대로다. `hasLocation` / `hasTakenAt` 이 true 로 나갈 뿐이다.
+- 🔴 **`latitude` / `longitude` / `takenLocal` 은 지금 들어 있는 값이다** — `fixed` 갈래가
+  쓸모 있으려면 이것이 있어야 한다. 되돌리려고 만든 목록인데 「지금 뭐라고 적혀 있는지」를
+  모르면 고쳐 쓸 수가 없다. 다이얼로그의 폼은 이 값으로 채워라.
+  **없으면 키가 빠진다.** 0 으로 채우지 않는 이유는 (0,0)이 기니만 앞바다의 **실재하는
+  좌표**여서다 — 「없음」과 구별되지 않으면 그 바다에서 찍은 사진을 영영 못 고친다.
+  ⚠ `takenAt`(시간대가 확정된 순간)은 **싣지 않는다.** 어드민이 고치는 것은 벽시계 하나이고,
+  두 시각을 한 화면에 세우면 어느 쪽을 고치는지 헷갈린다. 그래서 EXIF 에서 순간만 뽑힌
+  첨부는 **`hasTakenAt: true` 인데 `takenLocal` 이 없다** — 그때 폼은 빈 칸으로 두고,
+  운영자가 새로 적으면 그 값이 순간을 이긴다(§9.2).
+- `limit` 기본 20, 최대 100. 🔴 **상한이 아니라 목표다** — 한 글의 첨부는 쪼개지 않으므로
+  마지막 글의 첨부 수만큼 넘칠 수 있다(커서가 글 단위라 중간에서 자르면 남은 첨부를 다음
+  페이지가 건너뛴다). 화면은 이 값을 "정확히 이만큼"으로 읽으면 안 된다.
+- `url` 을 목록에 함께 싣는 것이 이 화면의 요점이다. **운영자가 사진을 크게 봐야 어디였는지
+  떠올린다** — 썸네일만으로는 좌표를 찍을 수 없다.
+- `sourceName` 은 **빈 문자열일 수 있다**(골프장을 안 적고 연 라운드가 있다). 서버가
+  「이름 없는 라운딩」 같은 문구를 지어내지 않으니 그 자리에 무엇을 세울지는 화면이 정한다.
+- 파일 첨부(PDF 등)와 지워진 글은 애초에 오지 않는다 — 찍힌 자리라는 개념이 없다.
+
+**`nextCursor` 는 더 훑을 것이 남았을 때만 온다.** 없으면 끝이다(`null` 이 아니라 키 자체가
+빠진다 — `if (res.nextCursor)` 로 판정하면 둘 다 안전하다).
+
+> 🔴 **이 조회는 훑는다.** Firestore 로는 "medias 배열 안에 latitude 가 없는 것"을 물을 수
+> 없어(배열 원소에는 색인이 서지 않는다) 라운드·생활피드를 순서대로 지나며 읽는다. 그래서
+> **한 요청에 읽을 문서 수를 500 으로 제한**하고, 소진하면 거기까지 주고 `nextCursor` 를 낸다.
+> 즉 **빈 페이지가 와도 끝이 아닐 수 있다** — `nextCursor` 가 있으면 계속 눌러야 한다.
+> 보정이 끝나갈수록(채울 것이 없을수록) 빈 페이지가 늘어난다. 복합 색인은 필요 없다.
+
+### 9.2 좌표·촬영일시 찍어 넣기
+
+```
+POST /admin/scenes/locate
+req {
+  sourceType, sourceId, feedId, storagePath,   // 무엇을 고칠지 (전부 필수)
+  latitude?: number, longitude?: number,        // 둘 다 있거나 둘 다 없다
+  takenLocal?: "2026-09-05 14:32:10",           // 시간대 없는 현지 시각
+  utcOffsetMinutes?: number,                    // 알면 함께 (KST = 540)
+  clearLocation?: boolean,                      // true 면 좌표를 지운다
+  clearTaken?: boolean                          // true 면 촬영일시를 지운다
+}
+res 200 { ok: true }
+```
+
+- 대상은 `storagePath` 로 고른다. 첨부에는 불변 ID 가 없고 배열 순번은 첨부가 하나 빠지는
+  순간 다른 사진을 가리키므로, 순번을 키로 쓰지 않는다.
+- 좌표를 넣으면 `locationSource` 가 **`manual`** 로 기록된다. 나중에 자동으로 잡힌 좌표와
+  사람이 찍은 좌표를 갈라 세는 유일한 단서다. `geohash` 는 서버가 만든다(보내지 마라).
+- `takenLocal` 은 **시간대가 없는 벽시계**다. 사람이 기억해 적는 값이라 시간대가 붙을 자리가
+  없고, 한국 시간대를 가정해 보내면 해외에서 찍은 사진이 아홉 시간 밀린다.
+  사람이 적은 값은 EXIF 값을 **이긴다**(기존 `takenAt` 은 지워진다).
+- 🔴 **`utcOffsetMinutes` 는 기본적으로 보내지 마라.** 여기 오는 촬영시각은 사람이 기억해
+  적는 값이고, 옛 사진일수록 **어디서 찍었는지가 흐릿하다.** KST(540)를 실어 보내면 해외에서
+  찍은 사진에 거짓 시간대가 박히고, 그 뒤로는 시각과 시간대 중 어느 쪽이 맞는지 알 수 없다.
+  값이 없으면 서버는 「시간대 미상」으로 둔다 — **KST 를 가정하지 않는다.**
+  비워 두어도 잃는 것이 없다: 지도의 정렬은 시간대 없는 벽시계로 하고, 그때 `takenLocal` 을
+  **그대로** 읽는다. 운영자가 촬영지의 시간대를 확실히 아는 경우에만 함께 보낸다.
+  `takenLocal` 을 새로 적으면 `utcOffsetMinutes` 도 **함께 갈아 끼워진다**(안 보내면 지워진다) —
+  새 시각에 옛 시간대를 붙여 두면 둘이 서로 다른 사진의 것이 된다.
+- `clearLocation` / `clearTaken` 은 되돌리기다. **화면에 반드시 두어라** — 잘못 찍은 좌표를
+  지울 길이 없으면 지도에 엉뚱한 자리의 사진이 영영 남는다.
+- 좌표를 넣거나 지우면 지도 파생 문서(`scene_media`)가 **같은 트랜잭션에서** 함께 서거나
+  내려간다. 화면은 이 응답 하나만 보면 된다.
+
+에러:
+
+| 상황 | status / code |
+|---|---|
+| 위도·경도 중 하나만 보냄, 넣기와 지우기를 함께 보냄, 바꿀 값이 없음 | 400 `VALIDATION_FAILED` |
+| 좌표가 지구 밖, `takenLocal` 이 `YYYY-MM-DD HH:MM:SS` 모양이 아님 | 400 `VALIDATION_FAILED` |
+| 사진·동영상이 아닌 첨부 | 400 `VALIDATION_FAILED` |
+| 원본·글·첨부가 없거나 지워짐 | 404 `NOT_FOUND` |
+
+> 🔴 **값이 이상하면 조용히 버리지 않고 거절한다.** 업로드 경로는 좌표 하나 때문에 사진이
+> 안 올라가는 편이 더 나빠 잘못된 값을 말없이 버리지만, 여기서는 반대다 — 운영자가 방금
+> 찍어 넣은 값이 소리 없이 사라지면 저장된 줄 알고 다음 사진으로 넘어간다.

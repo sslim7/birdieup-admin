@@ -18,6 +18,11 @@ COPY . .
 ARG VITE_API_BASE_URL=https://api.birdieup.kr
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
+# 구글 지도 키(장면 위치 보정 화면 전용). **기본값은 비어 있다** —
+# 없으면 그 화면이 지도를 띄우지 않고 좌표 입력 칸만 쓰게 되며, 다른 화면은 영향이 없다.
+ARG VITE_GOOGLE_MAPS_API_KEY=
+ENV VITE_GOOGLE_MAPS_API_KEY=$VITE_GOOGLE_MAPS_API_KEY
+
 RUN npm run build
 
 # --- serve: nginx on Cloud Run ($PORT=8080) ---
