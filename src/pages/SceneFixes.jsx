@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ImageOff, Loader2, MapPinned, Video } from 'lucide-react';
+import { ImageOff, Loader2, MapPinned, Search, Video, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -52,6 +53,15 @@ import {
 
 /** 미리보기 / 원본 / 작성자 / 올린 날 / 빠진 것 */
 const COLUMN_COUNT = 5;
+
+/**
+ * 검색어를 서버에 보내기까지 기다리는 시간(ms).
+ *
+ * 🔴 타자마다 보내면 안 된다. 이 조회는 색인을 타지 못하고 **문서를 훑는다**(계약 §9.1) —
+ * 한 글자에 한 번씩 부르면 한 단어를 치는 동안 수백 건 읽기가 그 횟수만큼 일어난다.
+ * 활동 로그의 검색칸과 같은 값이다(AuditLogs.DEBOUNCE_MS).
+ */
+const SEARCH_DEBOUNCE_MS = 300;
 
 /** 필터 세그먼트. 값은 서버 쿼리(missing)와 같아야 한다. */
 const MISSING_SEGMENTS = [
@@ -128,6 +138,16 @@ function ScenePreview({ scene }) {
 
 export default function SceneFixes() {
   const [missing, setMissing] = useState(SCENE_MISSING.ANY);
+  /*
+   * 검색어가 둘인 이유. searchInput 은 **칸에 보이는 글자**이고, search 는 **지금 목록이 선
+   * 조건**이다(디바운스를 거친 값). 하나로 합치면 타자마다 조회가 나가고, 그 조회는 문서를
+   * 훑는 일이라 값이 비싸다(§SEARCH_DEBOUNCE_MS).
+   *
+   * 목록에 실린 것은 언제나 search 쪽이므로, "없습니다" 문구에 넣을 검색어도 search 다 —
+   * 입력 중인 글자를 문구에 넣으면 아직 찾아보지도 않은 말로 "없다"고 말하게 된다.
+   */
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -143,6 +163,19 @@ export default function SceneFixes() {
   // 늦게 온 옛 응답이 새 목록 뒤에 붙어 중복 행이 생긴다. 그 응답을 버리기 위한 장치다.
   const requestIdRef = useRef(0);
 
+  /*
+   * 검색어 디바운스. 멈춘 뒤에야 search 가 바뀌고, search 는 reload 의 의존성이라 그때
+   * 첫 장부터 다시 받는다(커서는 조건과 한 쌍이다 — 계약 §9.1).
+   *
+   * ⚠ 여기서 items 를 비우지 않는다. 지웠다가 되돌려 친 경우처럼 **값이 그대로면** search 가
+   * 바뀌지 않아 reload 가 돌지 않는데, 그때 목록만 비워 두면 빈 화면이 그대로 굳는다.
+   * reload 가 곧바로 skeleton 을 세우므로(loading) 옛 행이 보이는 시간도 없다.
+   */
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   /**
    * 지금 필터로 첫 장부터 다시 불러온다.
    *
@@ -155,7 +188,7 @@ export default function SceneFixes() {
 
     setLoading(true);
     try {
-      const { items: page, nextCursor: cursor } = await fetchPendingScenes({ missing });
+      const { items: page, nextCursor: cursor } = await fetchPendingScenes({ missing, q: search });
       if (requestIdRef.current !== requestId) return;
       setItems(page);
       setNextCursor(cursor);
@@ -167,9 +200,9 @@ export default function SceneFixes() {
     } finally {
       if (requestIdRef.current === requestId) setLoading(false);
     }
-  }, [missing]);
+  }, [missing, search]);
 
-  // missing 이 reload 의 의존성이라 필터가 바뀌면 이 효과가 알아서 첫 장을 다시 받는다.
+  // missing·search 가 reload 의 의존성이라 조건이 바뀌면 이 효과가 알아서 첫 장을 다시 받는다.
   useEffect(() => {
     reload();
   }, [reload]);
@@ -183,8 +216,9 @@ export default function SceneFixes() {
     try {
       const { items: page, nextCursor: cursor } = await fetchPendingScenes({
         cursor: nextCursor,
-        // 커서만 보내고 필터를 빠뜨리면 서버가 조건 없는 뒷장을 내려줄 수 있다. 항상 함께 보낸다.
+        // 커서만 보내고 조건을 빠뜨리면 서버가 조건 없는 뒷장을 내려줄 수 있다. 항상 함께 보낸다.
         missing,
+        q: search,
       });
       // 그 사이 reload 가 돌았다면 이 응답은 이미 버린 목록의 뒷장이다.
       if (requestIdRef.current !== requestId) return;
@@ -265,6 +299,41 @@ export default function SceneFixes() {
               );
             })}
           </div>
+
+          {/*
+            🔴 **w-full 이라 언제나 윗줄에서 떨어진다.** 이 줄에는 이미 「동영상에서 자동으로
+               찾기」 버튼과 갈래 넷이 서 있어서, 입력칸까지 한 줄에 세우면 좁은 화면에서
+               글자 몇 자만 보이는 칸이 된다. flex-wrap 이 걸린 줄이므로 폭만 채우면 된다.
+            🔴 **어떤 경우에도 disabled 를 붙이지 마라.** 조회 중에도 계속 칠 수 있어야 한다 —
+               이 목록은 훑기라 한 번에 몇 초씩 걸리는데, 그동안 칸이 잠기면 운영자는 글자를
+               잃는다. 늦게 온 응답은 requestIdRef 가 버리므로 잠글 이유도 없다.
+          */}
+          <div className="relative w-full">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="골프장이름이나 생활피드제목으로 검색하세요"
+              className="h-9 rounded-xl pl-8 pr-9 text-sm"
+              aria-label="골프장 이름·생활피드 제목으로 검색"
+            />
+            {/* 지우기. 디바운스를 기다리지 않고 search 까지 함께 비운다 — 지우는 동작은
+                "원래 목록으로 돌아가기"라 300ms 를 기다릴 이유가 없다. 뒤늦게 타이머가
+                같은 빈 값을 넣어도 상태가 그대로라 다시 조회되지 않는다. */}
+            {searchInput && (
+              <button
+                type="button"
+                aria-label="검색어 지우기"
+                onClick={() => {
+                  setSearchInput('');
+                  setSearch('');
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         <Table>
@@ -291,13 +360,20 @@ export default function SceneFixes() {
                       끝맺으면 운영자가 보정이 끝난 줄 알고 화면을 닫는다 — 커서가 남아 있으면
                       아직 끝이 아니라고 말해야 한다.
                       끝까지 훑은 경우에도 필터 탓의 0건과 정말 다 채운 것을 갈라 적는다. */}
+                  {/* 검색 중에는 그 말이 더 중요해진다. 검색어를 넣어 말하지 않으면 운영자는
+                      "이 골프장은 없구나" 로 읽고 검색을 접는데, 사실은 **이 구간에** 없을
+                      뿐이고 다음 구간에 있을 수 있다(훑기 예산 — 계약 §9.1). */}
                   {nextCursor
-                    ? '이 구간에는 없습니다. 아래 「더 보기」로 계속 찾을 수 있어요.'
-                    : isFixedView
-                      ? '손으로 보정한 장면이 아직 없습니다.'
-                      : missing === SCENE_MISSING.ANY
-                        ? '보정할 장면이 없습니다.'
-                        : '이 조건에 해당하는 장면이 없습니다.'}
+                    ? search
+                      ? `'${search}' 는 이 구간에 없습니다. 아래 「더 보기」로 계속 찾을 수 있어요.`
+                      : '이 구간에는 없습니다. 아래 「더 보기」로 계속 찾을 수 있어요.'
+                    : search
+                      ? `'${search}' 에 해당하는 장면을 찾지 못했습니다.`
+                      : isFixedView
+                        ? '손으로 보정한 장면이 아직 없습니다.'
+                        : missing === SCENE_MISSING.ANY
+                          ? '보정할 장면이 없습니다.'
+                          : '이 조건에 해당하는 장면이 없습니다.'}
                 </TableCell>
               </TableRow>
             ) : (

@@ -26,6 +26,9 @@ import apiClient from './apiClient';
  *                any=좌표 또는 촬영일이 없는 것 · location=좌표만 · time=촬영일만
  *                **fixed=사람이 어드민에서 찍어 넣은 좌표(locationSource="manual")만.**
  *                자동으로 잡힌 좌표는 여기 오지 않는다. 잘못 찍은 값을 되돌리는 통로다.
+ *       q        **`sourceName`(골프장 이름 | 생활피드 제목) 부분 일치.** 대소문자를 가리지
+ *                않는다 — 이름에 「하늘나라 CC」처럼 라틴 문자가 섞여 있어서다. 앞뒤 공백은
+ *                서버가 떼고, 떼고 나서 비면 보내지 않은 것과 같다(100자를 넘으면 잘린다).
  *
  *     응답 200:
  *     {
@@ -108,9 +111,15 @@ import apiClient from './apiClient';
  * - `limit` 은 **상한이 아니라 목표다.** 한 글의 첨부를 쪼개지 않아서 마지막 글의 첨부 수만큼
  *   넘칠 수 있다. "정확히 이만큼 온다"고 읽지 마라.
  * - `thumbUrl` 은 썸네일이 없으면 원본 URL 이 들어온다. 빈 값일 때만 대체 아이콘을 세우면 된다.
+ * - 🔴 **이름으로 거르는 일은 서버(`q`)가 한다. 받아 둔 목록을 화면에서 filter 하지 마라.**
+ *   화면이 가진 것은 지금 받아 둔 한 장(20건)뿐이라, 뒤쪽 장에 있는 것을 「없다」고 말하게
+ *   된다. 서버는 훑으면서 이미 원본 문서를 읽어 이름을 꺼내고 있어 그 자리에서 거르면 공짜다.
+ *   ⚠ `q` 를 넣어도 **훑기 예산은 그대로다.** 검색어가 걸리는 것이 한 구간에 0건일 수 있고
+ *   그것은 정상이다 — `nextCursor` 가 있으면 아직 끝이 아니다(바로 위 항목).
  * - **커서 페이지네이션이고 total 이 없다.** `nextCursor` 를 다음 요청에 그대로 실어 이어
  *   붙이는 방식만 가능하다(활동 로그만 page/total 이다 — 그쪽 코드를 베끼지 마라).
- *   커서는 `missing` 과 한 쌍이므로 필터가 바뀌면 반드시 커서 없이 첫 장부터 다시 받는다.
+ *   커서는 `missing`·`q` 와 한 쌍이므로 **조건이 하나라도 바뀌면** 반드시 커서 없이 첫 장부터
+ *   다시 받는다.
  * - 에러는 전부 `{ code, message }` 이고 `message` 는 화면에 그대로 띄워도 되는 한국어다
  *   → `readErrorMessage`.
  */
@@ -287,13 +296,18 @@ export function formatKstDateTime(value) {
  * 보정이 필요한 장면 한 장. `cursor` 가 없으면 첫 장이다.
  *
  * `cursor` 를 빈 문자열로 실어 보내면 서버가 커서 파싱을 시도하다 400 을 줄 수 있어
- * 아예 뺀다(compactParams 가 그 일을 한다).
+ * 아예 뺀다(compactParams 가 그 일을 한다). `q` 도 같은 이유로 빈 값이면 빠진다 — 검색칸을
+ * 지웠을 때 `q=` 가 실려 가면 뜻이 "검색어 없음"이 아닌 것으로 읽힐 여지를 아예 없앤다
+ * (서버는 공백을 떼고 비면 거르지 않지만, 계약의 관대함에 기대지 않는다).
+ *
+ * `q` 는 **골프장 이름 · 생활피드 제목 부분 일치**다. 🔴 `missing` 과 마찬가지로 커서와 한
+ * 쌍이므로, 검색어가 바뀌면 커서 없이 첫 장부터 다시 받아야 한다.
  *
  * 응답이 어떤 이유로든 비정상이어도 화면이 깨지지 않도록 항상 `{ items, nextCursor }` 를
  * 돌려준다. `nextCursor` 는 서버가 만든 불투명 문자열이니 파싱하거나 만들어내지 마라.
  */
-export async function fetchPendingScenes({ limit = PAGE_SIZE, cursor, missing } = {}) {
-  const params = compactParams({ limit, cursor, missing });
+export async function fetchPendingScenes({ limit = PAGE_SIZE, cursor, missing, q } = {}) {
+  const params = compactParams({ limit, cursor, missing, q });
   const { data } = await apiClient.get('/admin/scenes/pending', { params });
   return {
     items: Array.isArray(data?.items) ? data.items : [],
