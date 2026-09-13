@@ -38,7 +38,8 @@ import apiClient from './apiClient';
  *           storagePath:string,
  *           mediaKind:  "photo" | "video",
  *           thumbUrl:   string,
- *           url:        string,     // 원본. 다이얼로그가 크게 띄워 장소를 떠올리게 하는 근거다
+ *           url:        string,     // 원본. 화면에 크게 거는 것은 thumbUrl 이고, 이것은
+ *                                   // 「원본 보기」로 새 탭에서만 연다(scene-fix-dialog 주석)
  *           authorName: string,
  *           uploadedAt: string,     // 올린 시각(RFC3339 UTC). 찍은 시각이 아니다
  *           hasLocation:boolean,

@@ -247,6 +247,12 @@ export default function SceneMapPicker({ latitude, longitude, onPick, defaultQue
 
     let cancelled = false;
     const listeners = [];
+    /**
+     * 만들어진 지도. 정리 함수가 이것을 보고 놓아 준다.
+     * `mapRef` 가 아니라 **이펙트 스코프의 변수**를 쓰는 이유: 지도는 `loadGoogleMaps().then`
+     * 안에서 만들어지고, 정리할 대상은 "이 이펙트가 만든 그 지도" 하나로 못박혀 있어야 한다.
+     */
+    let map = null;
 
     loadGoogleMaps().then((api) => {
       if (cancelled) return;
@@ -260,7 +266,7 @@ export default function SceneMapPicker({ latitude, longitude, onPick, defaultQue
       setSearchStatus(api.Place ? 'ready' : 'unavailable');
 
       const spot = spotRef.current;
-      const map = new api.Map(boxRef.current, {
+      map = new api.Map(boxRef.current, {
         center: spot ?? DEFAULT_CENTER,
         zoom: spot ? PICKED_ZOOM : DEFAULT_ZOOM,
         // 위 주석 참고 — 중심이 곧 좌표라서 중심을 끌고 가는 조작을 막는다.
@@ -294,9 +300,40 @@ export default function SceneMapPicker({ latitude, longitude, onPick, defaultQue
       setStatus('ready');
     });
 
+    /**
+     * 🔴 **지도는 참조만 끊어서는 놓이지 않는다.**
+     *
+     * 이 선택기는 Radix 다이얼로그 **안에** 산다. Radix 는 닫을 때 내용을 언마운트하므로
+     * 이 이펙트는 다이얼로그를 여는 횟수만큼 다시 돌고, 그때마다 `new api.Map(...)` 이
+     * 하나씩 더 생긴다. 예전에는 정리 함수가 우리가 단 리스너만 떼고 `mapRef.current = null`
+     * 로 참조만 끊었는데, 그것으로는 **아무것도 놓이지 않는다** — 지도 인스턴스가 자기가
+     * 만들어 넣은 타일 <img> 와 컨트롤 DOM, 그리고 SDK 가 스스로 붙인 리스너를 계속 물고
+     * 있어서 GC 가 그 덩어리를 통째로 지나친다. 열 때마다 그 덩어리가 쌓인다.
+     *
+     * 🔴 빠뜨리면 **모바일에서 두세 번째 장면을 열 때 탭이 먹통이 된다**(2026-09-13 운영에서
+     *    겪음). 첫 장면은 멀쩡히 되고 두 번째·세 번째부터 멈춰서, 좌표 저장 쪽을 의심하기
+     *    쉽지만 원인은 여기다.
+     */
     return () => {
       cancelled = true;
       listeners.forEach((listener) => listener.remove());
+
+      if (map) {
+        // 우리가 `listeners` 로 들고 있는 것 말고도 SDK 가 지도에 스스로 붙여 둔 리스너가 있다.
+        window.google?.maps?.event?.clearInstanceListeners?.(map);
+        // 지도 옵션에 걸린 바인딩을 푼다. 버전에 따라 없을 수 있어 있을 때만 부른다.
+        if (typeof map.unbindAll === 'function') map.unbindAll();
+      }
+
+      // 🔴 **실제로 메모리를 놓아주는 자리는 여기다.** React 가 걷어 가는 것은 우리가 만든
+      //    상자(`boxRef`) 하나뿐이고, 그 안의 지도 DOM 은 React 가 만든 적이 없어 그대로
+      //    인스턴스에 매달려 남는다. 손으로 비워야 타일과 컨트롤이 인스턴스에서 떨어진다.
+      const box = boxRef.current;
+      if (box) {
+        while (box.firstChild) box.removeChild(box.firstChild);
+      }
+
+      map = null;
       mapRef.current = null;
     };
   }, []);

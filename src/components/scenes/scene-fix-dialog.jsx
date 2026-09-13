@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { CalendarClock, Eraser, Loader2, MapPin } from "lucide-react";
+import {
+  CalendarClock,
+  Eraser,
+  ExternalLink,
+  Loader2,
+  MapPin,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -35,8 +41,9 @@ import {
  * 폼 관례는 `@/components/posts/post-board` 의 PostEditorDialog 를 따른다
  * (canSubmit 로 저장 버튼 잠그기 · setField · 2단계 확인 · toast 문구).
  *
- * **이 화면에서 제일 중요한 것은 사진이다.** 좌표를 기억해 내는 단서가 그것뿐이라 원본을
- * 크게 띄우고, 지도와 입력 칸은 그 아래에 둔다.
+ * **이 화면에서 제일 중요한 것은 사진이다.** 좌표를 기억해 내는 단서가 그것뿐이라 사진을
+ * 가장 크게 띄우고, 지도와 입력 칸은 그 아래에 둔다. 다만 크게 띄우는 것은 **썸네일**이고,
+ * 원본은 「원본 보기」로 따로 연다 — 그 사정은 아래 미디어 블록 주석에 적어 두었다.
  */
 
 const EMPTY_FORM = { latitude: "", longitude: "", takenAt: "" };
@@ -196,6 +203,15 @@ export default function SceneFixDialog({ scene, open, onOpenChange, onSaved }) {
   const title = sceneTitle(scene);
   const isVideo = scene.mediaKind === "video";
 
+  /*
+    사진에 걸 주소. **썸네일이 먼저고 원본은 최후의 수단이다.**
+    `thumbUrl` 은 썸네일이 없으면 원본 URL 이 들어오지만(sceneService 주석) 그래도 빈 값으로
+    오는 경우가 있어, 그때만 `url` 로 떨어진다.
+  */
+  const photoUrl = scene.thumbUrl || scene.url;
+  // 동영상은 재생해야 하므로 원본 말고는 걸 것이 없다. 대신 아래에서 preload 를 끈다.
+  const hasMedia = isVideo ? Boolean(scene.url) : Boolean(photoUrl);
+
   return (
     <>
       <Dialog
@@ -214,25 +230,63 @@ export default function SceneFixDialog({ scene, open, onOpenChange, onSaved }) {
             </DialogDescription>
           </DialogHeader>
 
-          {/* 원본 미디어. 좌표를 떠올릴 단서가 이것뿐이라 가장 크게 둔다. */}
-          <div className="flex items-center justify-center rounded-xl bg-muted/40 p-2">
-            {!scene.url ? (
-              <p className="py-16 text-sm text-muted-foreground">
-                원본을 불러올 수 없습니다.
-              </p>
-            ) : isVideo ? (
-              <video
-                src={scene.url}
-                controls
-                preload="metadata"
-                className="max-h-[46vh] w-full rounded-lg bg-black"
-              />
-            ) : (
-              <img
-                src={scene.url}
-                alt={`${title} 첨부 사진`}
-                className="max-h-[46vh] w-full rounded-lg object-contain"
-              />
+          {/*
+            좌표를 떠올릴 단서가 이것뿐이라 가장 크게 둔다. 다만 띄우는 것은 **썸네일이다.**
+
+            🔴 한때 여기에 `scene.url`(원본)을 그대로 걸었다. 화면에는 `max-h-[46vh]` 로
+               작게 보여도 브라우저가 받아 푸는 것은 원본이라, 2048×1536 짜리 사진 한 장이
+               디코딩되면 12MB 안팎을 문다. 다이얼로그를 닫아도 그 자리가 바로 돌아오지는
+               않아서 **모바일에서 두세 번째 장면을 열면 탭이 그대로 멈췄다**(2026-09-13 운영).
+               목록(`@/pages/SceneFixes`)이 처음부터 `thumbUrl` 을 쓰는 것과 같은 이유다.
+
+            ⚠ 그래도 **원본을 볼 길은 남긴다.** 썸네일만으로는 어디인지 떠오르지 않는 장면이
+              있고, 그때 좌표를 짚을 근거는 원본밖에 없다. 대신 그 무게는 아래 「원본 보기」를
+              눌러 새 탭에서 **운영자가 원할 때 한 번만** 치른다 — 다이얼로그를 열 때마다가 아니라.
+          */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-center rounded-xl bg-muted/40 p-2">
+              {!hasMedia ? (
+                <p className="py-16 text-sm text-muted-foreground">
+                  원본을 불러올 수 없습니다.
+                </p>
+              ) : isVideo ? (
+                /* 🔴 `preload="none"`. `metadata` 로 두면 다이얼로그를 여는 것만으로 파일을
+                   받기 시작한다 — 동영상은 원본 그대로 올라가 있어 몇 MB짜리다. 재생을
+                   누른 사람만 받게 하고, 그 전에는 썸네일을 포스터로 세워 둔다. */
+                <video
+                  src={scene.url}
+                  poster={scene.thumbUrl || undefined}
+                  controls
+                  preload="none"
+                  className="max-h-[46vh] w-full rounded-lg bg-black"
+                />
+              ) : (
+                <img
+                  src={photoUrl}
+                  alt={`${title} 첨부 사진`}
+                  // 디코딩이 메인 스레드를 잡지 않게 한다. 이 사진을 기다리는 동안에도
+                  // 지도와 입력 칸은 눌려야 한다.
+                  decoding="async"
+                  className="max-h-[46vh] w-full rounded-lg object-contain"
+                />
+              )}
+            </div>
+
+            {/* 원본이 없는 장면에는 세우지 않는다 — 눌러도 갈 곳이 없는 버튼은 두지 않는다. */}
+            {scene.url && (
+              <div className="flex justify-end">
+                <Button
+                  asChild
+                  variant="ghost"
+                  className="h-8 rounded-xl text-xs text-muted-foreground"
+                >
+                  {/* 같은 탭에서 열면 채우던 폼이 날아간다. 반드시 새 탭이다. */}
+                  <a href={scene.url} target="_blank" rel="noreferrer">
+                    <ExternalLink className="size-3.5" />
+                    원본 보기
+                  </a>
+                </Button>
+              </div>
             )}
           </div>
 
