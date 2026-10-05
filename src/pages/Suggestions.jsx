@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, MessageSquareHeart, TriangleAlert } from 'lucide-react';
+import { Loader2, MessageSquareHeart, Paperclip, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -27,7 +27,7 @@ import {
  * 묶어 두어야 "답변 대기를 골랐는데 전체가 나온다" 류의 어긋남이 생기지 않는다.
  *
  * 「문자 미발송」(answered=true & notified=false)이 이 화면의 진짜 목적이다 —
- * 답변은 달렸는데 문자가 안 나간 제안은 여기서 찾지 못하면 아무도 다시 보지 않는다.
+ * 답변은 달렸는데 문자가 안 나간 의견은 여기서 찾지 못하면 아무도 다시 보지 않는다.
  * total 이 없는 커서 목록이라 서버가 걸러 주지 않으면 끝까지 넘겨 보는 수밖에 없다.
  */
 const FILTERS = [
@@ -35,9 +35,14 @@ const FILTERS = [
   { key: 'unanswered', label: '답변 대기', answered: false, notified: undefined },
   { key: 'answered', label: '답변 완료', answered: true, notified: undefined },
   { key: 'unnotified', label: '문자 미발송', answered: true, notified: false },
+  // 🔴 **이 하나만 서버가 걸러 주지 않는다.** `hasAttachment` 쿼리가 계약에 없어서
+  // 받아 온 페이지 안에서만 추린다. 그래서 「더 보기」로 다음 장을 받기 전까지는
+  // 뒤쪽에 묻힌 첨부를 못 본다 — 위의 넷과 성격이 다르다는 것을 화면도 말한다.
+  { key: 'attached', label: '첨부 있음', answered: undefined, notified: undefined },
 ];
 
 const UNNOTIFIED_FILTER_KEY = 'unnotified';
+const ATTACHED_FILTER_KEY = 'attached';
 
 /** 작성자 / 내용 / 등록일 / 상태 */
 const COLUMN_COUNT = 4;
@@ -48,10 +53,11 @@ const COLUMN_COUNT = 4;
  * 조회가 안 된 것처럼 보인다.
  */
 const EMPTY_MESSAGES = {
-  all: '등록된 제안이 없습니다.',
-  unanswered: '답변을 기다리는 제안이 없습니다.',
-  answered: '답변한 제안이 없습니다.',
+  all: '등록된 의견이 없습니다.',
+  unanswered: '답변을 기다리는 의견이 없습니다.',
+  answered: '답변한 의견이 없습니다.',
   unnotified: '문자가 발송되지 않은 답변이 없습니다.',
+  attached: '불러온 목록에 첨부가 딸린 의견이 없습니다.',
 };
 
 /**
@@ -59,7 +65,7 @@ const EMPTY_MESSAGES = {
  *
  * 「문자 미발송」(답변은 달렸는데 notifiedAt 이 빈 상태)을 destructive 로 띄우는 것이
  * 이 화면의 존재 이유다. 발송 실패는 답변 저장을 되돌리지 않으므로, 목록에서 눈에 띄지
- * 않으면 그 제안은 아무도 다시 보지 않는다.
+ * 않으면 그 의견은 아무도 다시 보지 않는다.
  */
 function StatusBadge({ item }) {
   if (!item.answered) return <Badge variant="secondary">답변 대기</Badge>;
@@ -96,6 +102,15 @@ export default function Suggestions() {
   const filter = FILTERS.find((entry) => entry.key === filterKey) ?? FILTERS[0];
   const { answered, notified } = filter;
 
+  /*
+    「첨부 있음」만 받아 온 뒤에 추린다(→ FILTERS 머리말). 서버 쿼리가 없어서다.
+    items 자체는 건드리지 않는다 — 커서로 이어 받을 때 기준이 흔들리면 안 된다.
+  */
+  const visibleItems =
+    filterKey === ATTACHED_FILTER_KEY
+      ? items.filter((item) => item.hasAttachment)
+      : items;
+
   /**
    * cursor 가 없으면 처음부터, 있으면 뒤에 이어 붙인다.
    * 필터가 바뀌면 커서는 의미를 잃으므로 호출부가 반드시 cursor 없이 부른다.
@@ -121,7 +136,7 @@ export default function Suggestions() {
           setItems([]);
           setNextCursor(null);
         }
-        toast.error(readErrorMessage(error, '제안 목록을 불러오지 못했습니다.'));
+        toast.error(readErrorMessage(error, '의견 목록을 불러오지 못했습니다.'));
       } finally {
         if (requestIdRef.current === requestId) {
           setLoading(false);
@@ -141,19 +156,19 @@ export default function Suggestions() {
     <div className="space-y-6">
       {/* 페이지 헤더 */}
       <p className="text-sm text-muted-foreground">
-        앱에서 들어온 제안을 확인하고 답변합니다. 답변을 저장하면 제안자에게 문자가
+        앱에서 들어온 의견을 확인하고 답변합니다. 답변을 저장하면 보낸 분에게 문자가
         발송됩니다.
       </p>
 
       {/*
         여기서 건수를 세어 보여 주지 않는다. 커서 목록이라 셀 수 있는 것은 지금 불러온
-        페이지뿐이고, 그 부분 집계를 전체인 양 적으면 뒤쪽에 묻힌 제안을 놓치게 만든다.
+        페이지뿐이고, 그 부분 집계를 전체인 양 적으면 뒤쪽에 묻힌 의견을 놓치게 만든다.
         대신 서버가 전부 걸러 주는 「문자 미발송」 필터로 보낸다.
       */}
       {filterKey !== UNNOTIFIED_FILTER_KEY && (
         <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
           <TriangleAlert className="size-4 shrink-0 text-destructive" />
-          <span>답변은 달렸는데 문자가 나가지 않은 제안은</span>
+          <span>답변은 달렸는데 문자가 나가지 않은 의견은</span>
           <Button
             type="button"
             variant="link"
@@ -172,7 +187,7 @@ export default function Suggestions() {
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-4">
           <div className="mr-auto flex items-center gap-2">
             <MessageSquareHeart className="size-4 text-primary" />
-            <h3 className="text-sm font-bold">제안 목록</h3>
+            <h3 className="text-sm font-bold">의견 목록</h3>
           </div>
 
           <div className="flex items-center gap-1 rounded-xl bg-muted p-1">
@@ -210,7 +225,7 @@ export default function Suggestions() {
           <TableBody>
             {loading ? (
               <TableSkeleton />
-            ) : items.length === 0 ? (
+            ) : visibleItems.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={COLUMN_COUNT}
@@ -220,7 +235,7 @@ export default function Suggestions() {
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((item) => (
+              visibleItems.map((item) => (
                 <TableRow
                   key={item.suggestionId}
                   role="link"
@@ -241,6 +256,17 @@ export default function Suggestions() {
                     <p className="line-clamp-2 max-w-xl text-sm whitespace-pre-wrap">
                       {item.excerpt || '(내용 없음)'}
                     </p>
+                    {/*
+                      첨부가 딸린 의견은 **처리하는 사람이 다르다** — 판독 신고는 고칠
+                      자료가 함께 온 것이라 글만 온 것과 섞이면 묻힌다. 목록에서 바로
+                      가려지도록 한 줄 아래에 표시만 둔다(파일 자체는 상세에만 있다).
+                    */}
+                    {item.hasAttachment && (
+                      <span className="mt-1.5 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <Paperclip className="size-3" />
+                        첨부 있음
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="py-3 text-sm text-muted-foreground">
                     {formatDate(item.createdAt)}
@@ -260,7 +286,11 @@ export default function Suggestions() {
         */}
         <div className="flex items-center justify-between gap-4 border-t border-border px-5 py-4">
           <p className="text-sm text-muted-foreground">
-            {loading ? '불러오는 중…' : `${items.length.toLocaleString()}건 표시 중`}
+            {loading
+              ? '불러오는 중…'
+              : filterKey === ATTACHED_FILTER_KEY
+                ? `불러온 ${items.length.toLocaleString()}건 중 첨부 ${visibleItems.length.toLocaleString()}건`
+                : `${items.length.toLocaleString()}건 표시 중`}
           </p>
           {nextCursor && (
             <Button

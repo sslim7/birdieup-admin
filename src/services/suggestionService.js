@@ -1,7 +1,7 @@
 import apiClient from './apiClient';
 
 /**
- * 제안받아요(suggestions) 어드민 API.
+ * 의견보내기(suggestions) 어드민 API.
  *
  * 계약의 정본은 docs/admin-api.md §3 이다. 이 주석과 문서가 어긋나면 문서가 맞다.
  * apiClient 의 baseURL 에는 경로 접두사가 없다 — kiik 의 `/api/v1` 관습을 들고 오지 마라.
@@ -23,7 +23,7 @@ import apiClient from './apiClient';
  *    - **total 이 없다.** 페이지 번호 UI 를 만들 수 없고 커서로만 이어 받는다.
  *    - `answered=true&notified=false` 가 「문자 미발송」이다. 이 조합을 서버가 걸러 주는 것이
  *      중요하다 — total 이 없는 커서 목록에서 클라이언트가 거르면 현재 페이지만 걸러져
- *      "미발송 N건"이 전체인 양 보이고, 뒤쪽에 묻힌 제안을 놓친다.
+ *      "미발송 N건"이 전체인 양 보이고, 뒤쪽에 묻힌 의견을 놓친다.
  *    - phoneNo 는 목록에 싣지 않는다(개인정보를 목록에 뿌리지 않는다). 상세에만 온다.
  *
  * 2) 상세  GET /admin/suggestions/{suggestionId}
@@ -34,17 +34,17 @@ import apiClient from './apiClient';
  * 3) 답변  POST /admin/suggestions/{suggestionId}/answer
  *    req { answer }   // 1..2000자
  *    200 { suggestionId, answer, answeredAt, notified: boolean, notifiedAt, reason?: string }
- *    - 저장하면 제안자에게 SMS 가 나간다. 문안은 서버가 정하며 답변 전문을 싣지 않는다
+ *    - 저장하면 보낸 분에게 SMS 가 나간다. 문안은 서버가 정하며 답변 전문을 싣지 않는다
  *      (길어지면 LMS 로 넘어가 요금이 뛴다).
- *    - 이미 답변한 제안에 다시 부르면 **덮어쓰고 SMS 도 다시 나간다.** 수정 UI 는 저장 전에
+ *    - 이미 답변한 의견에 다시 부르면 **덮어쓰고 SMS 도 다시 나간다.** 수정 UI 는 저장 전에
  *      그 사실을 반드시 알려야 한다.
  *    - **발송 실패가 답변 저장을 되돌리지 않는다.** 그때 notified:false 와 reason 이 오고
  *      notifiedAt 은 비어 있다. 화면은 폼을 되돌리지 말고 재발송 버튼을 남긴다.
  *
  * 4) 재발송  POST /admin/suggestions/{suggestionId}/notify
  *    200 { suggestionId, notified: boolean, notifiedAt, reason?: string }
- *    400 ANSWER_REQUIRED — 답변이 저장되지 않은 제안에 부른 경우
- *    - 답변은 저장됐는데 문자가 안 나간 건을 다시 쏜다. 이 화면이 없으면 그런 제안은
+ *    400 ANSWER_REQUIRED — 답변이 저장되지 않은 의견에 부른 경우
+ *    - 답변은 저장됐는데 문자가 안 나간 건을 다시 쏜다. 이 화면이 없으면 그런 의견은
  *      영원히 묻힌다 — 목록의 「문자 미발송」 필터·배지와 한 쌍이다.
  *
  * **두 응답 모두 notifiedAt 을 반드시 싣는다**(발송 실패면 null). 화면은 이 값을 그대로 쓰고
@@ -75,7 +75,7 @@ export function readErrorMessage(error, fallback) {
   return fallback;
 }
 
-/** 응답이 404 인지. 상세 화면이 「존재하지 않는 제안입니다」로 갈지 판단하는 데 쓴다. */
+/** 응답이 404 인지. 상세 화면이 「존재하지 않는 의견입니다」로 갈지 판단하는 데 쓴다. */
 export function isNotFound(error) {
   return error?.response?.status === 404;
 }
@@ -92,7 +92,7 @@ export function errorCode(error) {
   return typeof code === 'string' ? code : '';
 }
 
-/** 답변이 없는 제안에 재발송을 시도했을 때 서버가 주는 400. */
+/** 답변이 없는 의견에 재발송을 시도했을 때 서버가 주는 400. */
 export const ANSWER_REQUIRED = 'ANSWER_REQUIRED';
 
 /*
@@ -139,7 +139,7 @@ export function formatDateTime(value) {
 }
 
 /**
- * 제안 목록.
+ * 의견 목록.
  *
  * @param {object}  options
  * @param {boolean|undefined} options.answered  true=답변 완료 / false=답변 대기 / 생략=전체
@@ -172,7 +172,7 @@ export async function fetchSuggestions({
   };
 }
 
-/** 제안 상세. phoneNo 와 본문 전체는 여기에만 있다. */
+/** 의견 상세. phoneNo·본문 전체·첨부는 여기에만 있다. */
 export async function fetchSuggestion(suggestionId) {
   const response = await apiClient.get(
     `/admin/suggestions/${encodeURIComponent(suggestionId)}`
@@ -205,7 +205,7 @@ export async function answerSuggestion(suggestionId, answer) {
 
 /**
  * 답변 SMS 재발송.
- * 답변이 저장되지 않은 제안에 부르면 400 ANSWER_REQUIRED 다(= 화면 상태가 낡았다는 신호).
+ * 답변이 저장되지 않은 의견에 부르면 400 ANSWER_REQUIRED 다(= 화면 상태가 낡았다는 신호).
  */
 export async function notifySuggestion(suggestionId) {
   const response = await apiClient.post(

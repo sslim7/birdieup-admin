@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  Download,
   Loader2,
   MessageSquareHeart,
+  Paperclip,
   Pencil,
   Send,
   TriangleAlert,
@@ -24,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { formatBytes } from '@/services/emoticonService';
 import {
   ANSWER_MAX_LENGTH,
   ANSWER_REQUIRED,
@@ -51,6 +54,8 @@ export default function SuggestionDetail() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notifying, setNotifying] = useState(false);
+  // 서명 주소가 만료돼 사진이 안 열렸는지. 상세를 다시 받으면 풀린다.
+  const [photoBroken, setPhotoBroken] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,6 +63,8 @@ export default function SuggestionDetail() {
     try {
       const detail = await fetchSuggestion(suggestionId);
       setSuggestion(detail);
+      // 새 주소를 받았으니 깨짐 표시를 지운다.
+      setPhotoBroken(false);
       setEditing(false);
       setDraft(detail?.answer ?? '');
     } catch (error) {
@@ -66,7 +73,7 @@ export default function SuggestionDetail() {
       if (isNotFound(error)) {
         setMissing(true);
       } else {
-        toast.error(readErrorMessage(error, '제안을 불러오지 못했습니다.'));
+        toast.error(readErrorMessage(error, '의견을 불러오지 못했습니다.'));
       }
     } finally {
       setLoading(false);
@@ -79,6 +86,9 @@ export default function SuggestionDetail() {
 
   const hasAnswer = Boolean(suggestion?.answer);
   const notified = Boolean(suggestion?.notifiedAt);
+  // 첨부는 없는 의견이 대부분이라 null 이 정상이다(계약 §3).
+  const attachment = suggestion?.attachment ?? null;
+  const device = attachment?.device ?? null;
   // 답변 전이면 항상 편집 상태다. 답변이 있으면 「수정」을 눌러야 열린다.
   const editorOpen = Boolean(suggestion) && (!hasAnswer || editing);
 
@@ -188,7 +198,7 @@ export default function SuggestionDetail() {
             <MessageSquareHeart className="size-5 text-muted-foreground" />
           </div>
           <div className="space-y-1">
-            <p className="text-sm font-bold">존재하지 않는 제안입니다.</p>
+            <p className="text-sm font-bold">존재하지 않는 의견입니다.</p>
             <p className="text-sm text-muted-foreground">
               이미 삭제되었거나 주소가 잘못되었습니다.
             </p>
@@ -198,7 +208,7 @@ export default function SuggestionDetail() {
             className="rounded-xl font-bold"
             onClick={() => navigate(LIST_PATH)}
           >
-            제안 목록으로
+            의견 목록으로
           </Button>
         </section>
       </div>
@@ -209,7 +219,7 @@ export default function SuggestionDetail() {
     <div className="space-y-6">
       {backLink}
 
-      {/* 제안 본문 */}
+      {/* 의견 본문 */}
       <section className="rounded-2xl border border-border bg-card">
         <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
           <MessageSquareHeart className="size-4 text-primary" />
@@ -232,6 +242,119 @@ export default function SuggestionDetail() {
           {suggestion.body || '(내용 없음)'}
         </p>
       </section>
+
+      {/*
+        첨부 — 스코어카드 판독 신고다. 없는 의견이 대부분이라 **있을 때만** 선다.
+
+        고치는 사람이 가장 먼저 보는 것이 기기 정보라 맨 위에 둔다. 같은 사진이
+        아이폰 Vision 에서는 177블록, 안드로이드 ML Kit 에서는 74블록이라 엔진이
+        갈리면 새는 자리도 갈린다.
+      */}
+      {attachment && (
+        <section className="rounded-2xl border border-border bg-card">
+          <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
+            <Paperclip className="size-4 text-primary" />
+            <h3 className="text-sm font-bold">첨부</h3>
+            {attachment.kind === 'scorecard' && (
+              <Badge variant="secondary">스코어카드 판독</Badge>
+            )}
+            {/*
+              🔴 **주소는 10분 뒤 죽는다**(서버의 medialinks.ReadTTL). 상세를 열어 두고
+              한참 뒤에 누르면 안 열린다. 시계를 두고 미리 세는 대신 **열어 보고 안 되면
+              다시 받는** 쪽을 골랐다 — 남은 시간을 화면에 적어 두면 그 숫자를 맞추는
+              일이 또 생기고, 열리는 동안에도 사람을 재촉한다. 아래 사진이 깨지면
+              그 자리에서 다시 받기를 권한다.
+            */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="ml-auto h-auto p-0 text-muted-foreground"
+              onClick={load}
+            >
+              주소 새로 받기
+            </Button>
+          </div>
+
+          <div className="space-y-4 px-5 py-5">
+            {/* 기기 정보 — 이 넷이 OCR 출력을 가른다 */}
+            {device && (
+              <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                {[
+                  ['플랫폼', device.platform],
+                  ['OS', device.osVersion],
+                  ['앱', device.appVersion],
+                  ['기기', device.model],
+                ]
+                  .filter(([, value]) => value)
+                  .map(([label, value]) => (
+                    <div key={label} className="flex items-center gap-1.5">
+                      <dt className="text-muted-foreground">{label}</dt>
+                      <dd className="font-mono">{value}</dd>
+                    </div>
+                  ))}
+              </dl>
+            )}
+
+            {/* 사진 — 스코어카드라 작게 보면 쓸모가 없다. 눌러서 원본으로 연다 */}
+            {attachment.photo?.url &&
+              (photoBroken ? (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">
+                  <TriangleAlert className="size-4 shrink-0 text-destructive" />
+                  <span className="text-muted-foreground">
+                    사진 주소가 만료되었습니다.
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl"
+                    onClick={load}
+                  >
+                    다시 불러오기
+                  </Button>
+                </div>
+              ) : (
+                <a
+                  href={attachment.photo.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block w-fit"
+                >
+                  <img
+                    src={attachment.photo.url}
+                    alt="신고에 딸린 스코어카드 사진"
+                    className="max-h-80 rounded-xl border border-border object-contain"
+                    onError={() => setPhotoBroken(true)}
+                  />
+                  <span className="mt-1.5 block text-xs text-muted-foreground">
+                    눌러서 원본 보기 · {formatBytes(attachment.photo.bytes)}
+                  </span>
+                </a>
+              ))}
+
+            {/*
+              판독 결과(JSON). 화면에 펼칠 값이 없다 — 이 파일이 그대로
+              birdieup-app 의 회귀 자료(tests/fixtures/real/)가 된다.
+            */}
+            {attachment.data?.url && (
+              <a
+                href={attachment.data.url}
+                target="_blank"
+                rel="noreferrer"
+                download
+                className="inline-flex items-center gap-2 text-sm font-medium text-primary"
+              >
+                <Download className="size-4" />
+                판독 결과 내려받기
+                <span className="font-normal text-muted-foreground">
+                  {formatBytes(attachment.data.bytes)}
+                </span>
+              </a>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* 답변 */}
       <section className="rounded-2xl border border-border bg-card">
@@ -302,7 +425,7 @@ export default function SuggestionDetail() {
                   id="suggestion-answer"
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
-                  placeholder="제안에 대한 답변을 입력해 주세요."
+                  placeholder="의견에 대한 답변을 입력해 주세요."
                   className="min-h-40 rounded-xl"
                   aria-invalid={draft.length > ANSWER_MAX_LENGTH}
                 />
@@ -377,8 +500,8 @@ export default function SuggestionDetail() {
             <DialogTitle className="text-center">답변을 저장할까요?</DialogTitle>
             <DialogDescription className="text-center">
               {hasAnswer
-                ? '답변을 저장하면 제안자에게 문자가 다시 발송됩니다. 이전 답변은 이 내용으로 덮어써집니다.'
-                : '답변을 저장하면 제안자에게 문자가 발송됩니다.'}
+                ? '답변을 저장하면 보낸 분에게 문자가 다시 발송됩니다. 이전 답변은 이 내용으로 덮어써집니다.'
+                : '답변을 저장하면 보낸 분에게 문자가 발송됩니다.'}
             </DialogDescription>
           </DialogHeader>
 

@@ -32,7 +32,9 @@ export const navigation = {
         { label: '업데이트', href: '/posts/releases', icon: 'Sparkles', permission: 'posts-releases' },
       ],
     },
-    { label: '제안받아요', href: '/suggestions', icon: 'MessageSquareHeart', permission: 'suggestions' },
+    // 화면에 나가는 글자만 「의견보내기」다. href·permission 은 서버와 맞춰 둔 이름이라
+    // 그대로 둔다(앱 쪽 suggestion-sheet.tsx 와 같은 자세).
+    { label: '의견보내기', href: '/suggestions', icon: 'MessageSquareHeart', permission: 'suggestions' },
     { label: '이모티콘', href: '/emoticons', icon: 'Smile', permission: 'emoticons' },
   ],
   system: [
@@ -96,7 +98,7 @@ const derivedPermissionOptions = navigation.main.flatMap((entry) => {
 
 /**
  * 권한 부여 UI(사용자 관리)에서 쓰는 선택지 목록.
- * 메뉴에서 파생되는 키(공지·업데이트·제안·이모티콘)에 메뉴 밖 키(지표)를 앞에 붙인 것이다.
+ * 메뉴에서 파생되는 키(공지·업데이트·의견보내기·이모티콘)에 메뉴 밖 키(지표)를 앞에 붙인 것이다.
  */
 export const permissionOptions = [
   ...standalonePermissionOptions,

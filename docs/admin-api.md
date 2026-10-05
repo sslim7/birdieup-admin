@@ -282,7 +282,7 @@ res  201 { uploadUrl, storagePath, url, expiresInSec }
 
 ---
 
-## 3. 제안받아요 (suggestions)
+## 3. 의견보내기 (suggestions)
 
 권한 키: `suggestions`.
 
@@ -295,9 +295,16 @@ res  201 { uploadUrl, storagePath, url, expiresInSec }
 
 ```
 목록 item = { suggestionId, userId, userName, excerpt, createdAt,
-              answered: boolean, answeredAt, notifiedAt }
+              answered: boolean, answeredAt, notifiedAt,
+              hasAttachment: boolean }
 상세      = { suggestionId, userId, userName, phoneNo, body, createdAt,
-              answer, answeredAt, notifiedAt }
+              answer, answeredAt, notifiedAt,
+              attachment: null | {
+                kind: "scorecard",
+                photo:  null | { storagePath, bytes, contentType, url },
+                data:   null | { storagePath, bytes, contentType, url },
+                device: null | { platform?, osVersion?, appVersion?, model? },
+              } }
 
 answer  req { answer }  → 200 { suggestionId, answer, answeredAt, notified: boolean, notifiedAt, reason?: string }
 notify                  → 200 { suggestionId, notified: boolean, notifiedAt, reason?: string }
@@ -307,19 +314,29 @@ notify                  → 200 { suggestionId, notified: boolean, notifiedAt, r
 - **두 응답 모두 `notifiedAt` 을 반드시 싣는다**(발송 실패면 `null`). 빼면 SPA 가 발송 시각을
   스스로 추정해 화면에 적게 되는데, 서버가 준 적 없는 시각이 사실처럼 보이는 것은
   감사 관점에서 그 자체가 결함이다.
-- `notified=false` 필터가 있는 이유: 답변은 달렸는데 문자가 안 나간 제안을 **한 화면에서 전부**
+- `notified=false` 필터가 있는 이유: 답변은 달렸는데 문자가 안 나간 의견을 **한 화면에서 전부**
   찾을 수 있어야 한다. `total` 이 없는 커서 목록이라 이 필터가 없으면 운영자가 「답변 완료」를
   끝까지 넘겨 보는 수밖에 없고, 그러면 결국 묻힌다.
 - `excerpt` 는 `body` 앞 **100자**, 줄바꿈은 공백으로 편다.
-- 답변이 없는 제안에 `/notify` 를 부르면 **400 `ANSWER_REQUIRED`**.
-- 답변을 저장하면 제안자에게 SMS 가 나간다. **문안은 서버가 정하며 답변 전문을 싣지 않는다**
+- 답변이 없는 의견에 `/notify` 를 부르면 **400 `ANSWER_REQUIRED`**.
+- 답변을 저장하면 보낸 분에게 SMS 가 나간다. **문안은 서버가 정하며 답변 전문을 싣지 않는다**
   (`internal/suggestions/answer.go` 의 `AnswerSMS`) — 길어지면 LMS 로 넘어가 요금이 뛴다.
 - **발송 실패가 답변 저장을 되돌리지 않는다.** 그때 `notified: false` 와 `reason` 이 오고
   `notifiedAt` 은 비어 있다. 화면은 그 행에 「문자 미발송」 배지와 재발송 버튼을 둔다
   (= `/notify`). 에뮬레이터 모드에서는 실제로 나가지 않는다(로그만).
-- 이미 답변한 제안에 `/answer` 를 다시 부르면 **덮어쓴다**(오타 수정). 그때도 SMS 는 다시 나간다.
+- 이미 답변한 의견에 `/answer` 를 다시 부르면 **덮어쓴다**(오타 수정). 그때도 SMS 는 다시 나간다.
 - `answer` 1..2000자.
 - `phoneNo` 는 상세에만 싣는다. 목록에 개인정보를 뿌리지 않는다.
+- **첨부(`attachment`)는 스코어카드 판독 신고다.** 없는 의견이 대부분이라 `null` 이 정상이다.
+  앱이 사진과 그 폰의 OCR 출력을 함께 올린다 — 같은 사진이 아이폰 Vision 에서는 177블록,
+  안드로이드 ML Kit 에서는 74블록이라 **기기마다 새는 자리가 갈린다.** 글만으로는 못 고친다.
+- `attachment.*.url` 은 **10분짜리 서명 주소**다(`internal/medialinks` 의 `ReadTTL`).
+  그 버킷은 공개가 아니라서 서명 없이는 아무것도 못 연다 — 미디어 버킷처럼 공개로 두면
+  주소를 아는 사람이 남의 스코어카드(동반자 이름이 적혀 있다)를 본다.
+  **사용자용 상세(`/users/me/suggestions/{id}`)에는 `url` 키가 아예 없다.**
+- `hasAttachment` 를 목록에 싣는 이유: 판독 신고는 처리하는 사람이 다르다. 상세를 하나씩
+  열어 봐야 알 수 있으면 글만 온 의견 사이에 묻힌다. ⚠ **쿼리로는 못 거른다** — 어드민
+  화면은 받아 온 페이지 안에서만 추리고, 그 한계를 화면이 적는다.
 
 ---
 
@@ -453,14 +470,14 @@ res 200 {
 |---|---|---|
 | `GET /posts`, `GET /posts/{postId}` | `internal/posts/posts.go` | 공개·미인증. `publishedAt <= now` 만 보인다 |
 | `GET /users/me/suggestions` 3종 | `internal/suggestions/suggestions.go` | 본인 것만. 남의 id 는 404 |
-| 제안 저장소 메서드 | `internal/suggestions/store.go` | `Recent` / `SaveAnswer` / `MarkNotified` / `PhoneNo` |
+| 의견 저장소 메서드 | `internal/suggestions/store.go` | `Recent` / `SaveAnswer` / `MarkNotified` / `PhoneNo` |
 | 답변 + SMS 오케스트레이션 | `internal/suggestions/answer.go` | `Answer(...)`, `Notify(...)`, `AnswerSMS(appHost)` |
 | `GET /emoticons` | `internal/emoticons/emoticons.go` | `Catalog` 가 5분 캐시. `active:false` 는 걸러서 준다 |
 | 서명 URL 발급 | `internal/medialinks/medialinks.go` | V4 서명 PUT, 10분. 조회 URL = `MEDIA_PUBLIC_BASE_URL + "/" + storagePath` |
 | 에러·JSON 헬퍼 | `internal/httpx/httpx.go` | 모든 응답이 이걸 거친다 |
 | CLI 도구 | `cmd/post`, `cmd/answer-suggestion`, `cmd/seed-emoticons` | 어드민이 대체할 대상 |
 
-**제안 답변은 HTTP 표면만 없을 뿐 로직이 이미 다 있다.** `/admin/suggestions/{id}/answer` 는
+**의견 답변은 HTTP 표면만 없을 뿐 로직이 이미 다 있다.** `/admin/suggestions/{id}/answer` 는
 `answer.go` 의 `Answer(...)` 를 그대로 부르는 얇은 핸들러여야 한다 — SMS 문안·실패 처리·
 `notifiedAt` 규칙을 다시 구현하지 마라.
 
