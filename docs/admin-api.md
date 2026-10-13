@@ -770,3 +770,75 @@ res 200 { ok: true }
 > 🔴 **값이 이상하면 조용히 버리지 않고 거절한다.** 업로드 경로는 좌표 하나 때문에 사진이
 > 안 올라가는 편이 더 나빠 잘못된 값을 말없이 버리지만, 여기서는 반대다 — 운영자가 방금
 > 찍어 넣은 값이 소리 없이 사라지면 저장된 줄 알고 다음 사진으로 넘어간다.
+
+---
+
+## 10. 스코어카드 OCR 자동 전송 (scorecard reports)
+
+권한 키: `scorecard-reports`.
+
+🔴 **§3 의견보내기와 다른 컬렉션이고, 섞으면 사고다.** 앱은 스코어카드를 가져올 때마다
+사진과 그 폰의 판독 결과를 **자동으로** 보낸다(기본 켜짐). 이것을 의견 컬렉션에 넣으면
+자동 전송이 목록을 덮어 **운영자가 실제로 보낸 의견을 못 본다** — 하루에 수백 건이 쌓이는
+쪽과 사람이 답을 기다리는 쪽을 한 목록에 세운 것 자체가 설계의 실패 조건이다.
+그래서 컬렉션·라우트·권한 키·어드민 화면이 모두 따로 선다.
+§3 의 `attachment` 는 **사람이 글과 함께 올린** 판독 신고이고, 여기 오는 것은 글 없이
+기계가 보낸 것이다. 둘을 하나로 합치려는 시도가 곧 그 사고다.
+
+| Method | Path |
+|---|---|
+| GET | `/admin/scorecard-reports?limit&cursor` |
+| GET | `/admin/scorecard-reports/{reportId}` |
+| DELETE | `/admin/scorecard-reports/{reportId}` |
+
+```
+목록 item = { reportId, userId, note, createdAt,
+              hasPhoto: boolean, hasData: boolean,
+              device: null | { platform, osVersion, appVersion, model } }
+목록 res  = { items: [...], nextCursor: string|null }
+
+상세      = { reportId, userId, note, createdAt,
+              attachment: {
+                kind: "scorecard",
+                photo:  null | { storagePath, url, bytes, contentType },
+                data:   null | { storagePath, url, bytes, contentType },
+                device: null | { platform, osVersion, appVersion, model }
+              } }
+
+DELETE → 204 (본문 없음) / 404 `NOT_FOUND`
+```
+
+- 정렬은 `createdAt` 내림차순. `limit` 기본 20 · **상한 50**. `total` 은 없다 — 커서로만
+  이어 받고 페이지 번호 UI 를 만들 수 없다.
+- 🔴 **거르기 쿼리가 하나도 없다.** 의도한 것이다. `total` 이 없는 커서 목록에서 화면이
+  받아 온 페이지만 거르면 그 부분 집계가 전체인 양 보이고, 뒤쪽 장에 묻힌 건을 「없다」고
+  말하게 된다(§3 의 `hasAttachment` 가 같은 한계를 안고 있고 거기서는 화면이 그 사실을
+  적는다). 거를 필요가 생기면 **화면에 필터바를 세우지 말고 여기 쿼리를 먼저 넣어라.**
+- 🔴 **`userName` · `phoneNo` 를 싣지 않는다.** 자동 전송에는 답할 일이 없어 번호를 꺼낼
+  까닭이 없고, 판독을 고치는 데 필요한 것은 **기기 정보와 파일**이다. 목록·상세 어느 쪽에도
+  없으므로 화면이 사람을 가리는 단서는 `userId` 뿐이다 — 한 사람이 같은 실패를 쏟아 내는
+  것을 알아보는 데 그 값이 필요해서 남겨 둔다(어드민 화면은 길이 때문에 앞자리만 세운다).
+- `note` 는 **비어 있는 것이 정상이다.** 자동 전송이라 사람이 쓴 글이 없고, 판독이 틀렸을 때
+  사용자가 덧붙인 한 줄만 들어온다.
+- `device` 는 `null` 일 수 있다(그 길이 생기기 전 앱이 올린 건). **이 값이 목록의 첫 열이다** —
+  같은 사진이 아이폰 Vision 에서는 177블록, 안드로이드 ML Kit 에서는 74블록이라 엔진이
+  갈리면 새는 자리도 갈린다. 기기를 모르는 건은 재현할 수 없어 회귀 자료로 쓰기 어렵다.
+- `hasPhoto` / `hasData` 는 **고칠 자료가 실제로 왔는지**다. 목록은 있다/없다만 알고
+  **파일 주소는 상세에만 있다** — 목록이 서명 주소를 미리 받아 두면 한 페이지에 20개가
+  실리고, 운영자가 한 건을 들여다보는 동안 나머지 19개가 만료된다.
+- 🔴 **`attachment.*.url` 은 짧게 사는 서명 주소다**(§3 첨부와 같은 `internal/medialinks` 의
+  `ReadTTL`). **운영자 응답에만 실린다.** 그 버킷은 공개가 아니라서 서명 없이는 아무것도
+  못 연다 — 공개로 두면 주소를 아는 사람이 남의 스코어카드(동반자 이름이 적혀 있다)를 본다.
+  화면이 이 주소를 저장해 두거나 새 창 주소로 오래 들고 있으면 만료되므로,
+  **열 때마다 상세를 다시 읽는** 구조여야 한다.
+- 🔴 **DELETE 는 운영자가 거르는 손이고, 되돌릴 수 없다.** 회귀 자료(birdieup-app 의
+  `tests/fixtures/real/`)로 옮겨 적었거나 볼 것이 없는 건을 지운다. 자동 전송이라 지우는
+  자리가 없으면 끝없이 쌓여 쓸 자료를 찾을 수 없게 된다. 사진과 판독 결과 파일이 함께
+  내려가므로 화면은 확인 단계를 둔다. 두 번 눌렀거나 다른 창에서 이미 지운 경우의 404 는
+  실패가 아니라 **이미 지워졌다**는 뜻이다 — 화면은 그렇게 안내하고 목록으로 보낸다.
+- 어드민 화면: 목록 `src/pages/ScorecardReports.jsx`, 상세 `src/pages/ScorecardReportDetail.jsx`,
+  서비스 `src/services/scorecardReportService.js`. 메뉴는 「OCR 판독결과」이고
+  `navigation.system`(사이드바의 Support & Settings)에 둔다 — 답할 상대가 없는 기계 자료라
+  소식·의견 옆에 세우면 「답해야 하는 목록」으로 읽힌다. ⚠ system 에 둔 권한 키는
+  `permissionOptions` 로 자동 파생되지 않아 `navigation.js` 의
+  `standalonePermissionOptions` 에 손으로 얹어야 한다(빼면 아무에게도 줄 수 없는 메뉴가 된다).

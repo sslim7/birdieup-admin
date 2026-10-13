@@ -40,6 +40,27 @@ export const navigation = {
   system: [
     { label: '사용자 관리', href: '/users', icon: 'UserCog', adminOnly: true },
     { label: '활동 로그', href: '/audit-logs', icon: 'ScrollText', adminOnly: true },
+    /*
+      스코어카드 OCR **자동 전송** 목록.
+
+      🔴 **「의견보내기」 바로 아래에 두지 않았다.** 이것은 사람이 보낸 글이 아니라 앱이
+      스코어카드를 가져올 때마다 자동으로(기본 켜짐) 올리는 기계 자료다. 답할 상대가 없고
+      하는 일은 자료를 꺼내 쓰고 지우는 것뿐이다. 소식·의견 옆에 나란히 세우면 운영자가
+      「답해야 하는 목록」으로 읽고 두 화면을 같은 일로 다루기 시작한다 — 그게 이 분리를
+      무르는 첫걸음이다. 그래서 운영 도구가 모인 system 섹션(사이드바에서 제목으로
+      갈라진다)에 두고, 성격이 가장 가까운 「장면 위치 보정」(역시 기계가 놓친 자리를
+      사람이 손보는 도구) 위에 세운다.
+
+      adminOnly 가 아니라 permission 을 쓰는 이유 — 서버가 권한 키로 막는다(계약 §10).
+      다만 이 섹션의 키는 permissionOptions 로 파생되지 않아
+      아래 standalonePermissionOptions 에 손으로 얹어야 한다(그 주석 참고).
+    */
+    {
+      label: 'OCR 판독결과',
+      href: '/scorecard-reports',
+      icon: 'ScanText',
+      permission: 'scorecard-reports',
+    },
     // 옛 첨부의 좌표·촬영일시를 손으로 채우는 **임시 보정 도구**(SceneFixes.jsx 머리 주석 참고).
     // 서버도 AdminOnly 로 막으므로 permission 키를 만들지 않고 adminOnly 로 둔다.
     { label: '장면 위치 보정', href: '/scene-fixes', icon: 'MapPinned', adminOnly: true },
@@ -81,6 +102,14 @@ export const METRICS_PERMISSION = 'metrics';
  */
 const standalonePermissionOptions = [
   { key: METRICS_PERMISSION, label: '대시보드 - 지표' },
+  /*
+    🔴 **OCR 판독결과는 navigation.system 에 있어서 파생되지 않는다.** 아래
+    derivedPermissionOptions 는 navigation.main 만 훑는다(system 은 원래 adminOnly 전용
+    자리였다). 이 줄을 빼면 권한 부여 UI 에 키가 아예 나타나지 않아 **누구에게도 줄 수
+    없는 메뉴**가 되고, isAdmin 계정만 조용히 보게 된다 — 화면은 멀쩡해 보이므로 눈치채기
+    어렵다. 메뉴를 system 밖으로 옮기면 그때 이 줄을 지워라(중복으로 두 번 뜬다).
+  */
+  { key: 'scorecard-reports', label: 'OCR 판독결과' },
 ];
 
 /** navigation.main 에서 파생되는 권한 선택지 (그룹 자식은 "그룹라벨 - 아이템라벨") */
@@ -98,7 +127,8 @@ const derivedPermissionOptions = navigation.main.flatMap((entry) => {
 
 /**
  * 권한 부여 UI(사용자 관리)에서 쓰는 선택지 목록.
- * 메뉴에서 파생되는 키(공지·업데이트·의견보내기·이모티콘)에 메뉴 밖 키(지표)를 앞에 붙인 것이다.
+ * navigation.main 에서 파생되는 키(공지·업데이트·의견보내기·이모티콘)에, 파생되지 않는
+ * 키(지표 · OCR 판독결과)를 앞에 붙인 것이다.
  */
 export const permissionOptions = [
   ...standalonePermissionOptions,

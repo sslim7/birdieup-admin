@@ -21,6 +21,8 @@ const Releases = lazy(() => import("./pages/Releases"));
 const Suggestions = lazy(() => import("./pages/Suggestions"));
 const SuggestionDetail = lazy(() => import("./pages/SuggestionDetail"));
 const Emoticons = lazy(() => import("./pages/Emoticons"));
+const ScorecardReports = lazy(() => import("./pages/ScorecardReports"));
+const ScorecardReportDetail = lazy(() => import("./pages/ScorecardReportDetail"));
 const UserManagement = lazy(() => import("./pages/UserManagement"));
 const AuditLogs = lazy(() => import("./pages/AuditLogs"));
 const SceneFixes = lazy(() => import("./pages/SceneFixes"));
@@ -33,6 +35,11 @@ const pageRoutes = [
     { path: "/suggestions", component: Suggestions },
     { path: "/suggestions/:suggestionId", component: SuggestionDetail },
     { path: "/emoticons", component: Emoticons },
+    // 스코어카드 OCR 자동 전송. /suggestions 와 **다른 컬렉션·다른 라우트**다(계약 §10) —
+    // 경로를 /suggestions 아래로 끌어들이면 resolveActiveHref 가 의견 메뉴를 활성으로
+    // 잡아, 자동 전송을 보는 동안 사이드바가 「의견보내기」를 가리킨다.
+    { path: "/scorecard-reports", component: ScorecardReports },
+    { path: "/scorecard-reports/:reportId", component: ScorecardReportDetail },
     { path: "/users", component: UserManagement },
     { path: "/audit-logs", component: AuditLogs },
     { path: "/scene-fixes", component: SceneFixes },
